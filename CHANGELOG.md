@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+- Show Reddit's **For You** feed on **Home** for **API-Key-Free** accounts, with recommended posts mixed in, at the Best and Hot sorts
+  - Switch back with **Show Subscriptions** in Home's ••• menu, or **For You on Home** in Apollo Reborn settings
+  - If the feed can't load, Home shows your subscriptions
+
 ## [v4.0.1] - 2026-10-30
 
 ### Performance

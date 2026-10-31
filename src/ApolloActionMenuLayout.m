@@ -203,6 +203,7 @@ static ApolloActionMenuItem *ApolloAMItemMuteNotifs(void)  { return ApolloAMNati
 static ApolloActionMenuItem *ApolloAMItemFloatingTabs(void)    { return ApolloAMTweak(@"FloatingTabs", @"Keep in Floating Tab", @"pin.circle"); }
 static ApolloActionMenuItem *ApolloAMItemDeletedComments(void) { return ApolloAMTweak(@"DeletedComments", @"Show Deleted Comments", @"eye"); }
 static ApolloActionMenuItem *ApolloAMItemGalleryView(void)     { return ApolloAMTweak(@"GalleryView", @"Gallery View", @"square.grid.2x2"); }
+static ApolloActionMenuItem *ApolloAMItemForYouFeed(void)      { return ApolloAMTweak(@"ForYouFeed", @"Show For You", @"sparkles"); }
 static ApolloActionMenuItem *ApolloAMItemCommentNavigator(void) { return ApolloAMTweak(@"CommentNavigator", @"Jump Button Navigation", @"arrow.down.to.line"); }
 
 // Moderator menus (kinds captured from the live sheets, signed in as a
@@ -265,7 +266,7 @@ static NSArray<ApolloActionMenuItem *> *ApolloActionMenuBuildCatalog(ApolloActio
         // Liquid Glass with Polls on it is the four new-post buttons), so it
         // is neither movable nor hideable — everything after it is.
         return ApolloAMCatalogWithUsual(
-            @[ ApolloAMLocked(ApolloAMItemSubmit()), ApolloAMItemGalleryView(), ApolloAMItemSubscribe(), ApolloAMItemFavorite(),
+            @[ ApolloAMLocked(ApolloAMItemSubmit()), ApolloAMItemGalleryView(), ApolloAMItemForYouFeed(), ApolloAMItemSubscribe(), ApolloAMItemFavorite(),
                ApolloAMItemHideRead(), ApolloAMItemSidebar(), ApolloAMItemRules(), ApolloAMItemFilterSub(),
                ApolloAMItemMultireddit(), ApolloAMItemPostSize(), ApolloAMItemUserFlair(), ApolloAMItemModerators(),
                ApolloAMItemShare(), ApolloAMItemNotifications() ],

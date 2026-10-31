@@ -25,6 +25,7 @@
 #import "ApolloFloatingTabs.h"       // close-all / fan-out entry points for the toggles
 #import "settings/ApolloAISettingsViewController.h"
 #import "ApolloWebSessionStore.h"
+#import "ApolloForYouMenu.h"
 #import "ApolloReduceRateLimiting.h"
 #import "ApolloWebJSONRouteUpdates.h"
 #import "settings/ApolloKeylessRouteStatusViewController.h"
@@ -1850,6 +1851,20 @@ typedef NS_ENUM(NSInteger, Tag) {
                                   onSelect:nil];
     reduceRateLimiting.visible = ^BOOL { return sWebJSONEnabled; };
 
+    // Home's For You feed. Also switched from Home's ••• menu (ApolloForYouMenu.h).
+    ApolloSettingsRow *forYouHomeFeed =
+        [ApolloSettingsRow customRowWithID:@"api.forYouHomeFeed"
+                                      cell:^UITableViewCell *(__unused UITableView *tableView, __unused ApolloSettingsRow *row) {
+            return [weakSelf switchCellWithIdentifier:@"Cell_API_ForYouHomeFeed"
+                                                label:@"For You on Home"
+                                               detail:@"Home shows Reddit's For You feed, with recommended posts, when sorted by Best or Hot. Turn off to see only your subscriptions. API-key-free accounts only."
+                                                   on:sForYouHomeFeed
+                                               action:@selector(forYouHomeFeedSwitchToggled:)]
+                ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+        }
+                                  onSelect:nil];
+    forYouHomeFeed.visible = ^BOOL { return sWebJSONEnabled; };
+
     // Which routes API-key-free reads are taking, what Reddit has blocked
     // since launch, and the Use Route Updates switch
     // (ApolloKeylessRouteStatusViewController).
@@ -1897,7 +1912,7 @@ typedef NS_ENUM(NSInteger, Tag) {
 
     return [ApolloSettingsSection sectionWithTitle:@"Experimental"
                                             footer:@"Sign in to reddit.com instead of using API keys."
-                                              rows:@[ webJSON, webSessionLogin, reduceRateLimiting, routeStatus, modernChat, modernModmail ]];
+                                              rows:@[ webJSON, webSessionLogin, forYouHomeFeed, reduceRateLimiting, routeStatus, modernChat, modernModmail ]];
 }
 
 - (ApolloSettingsSection *)buildAPIKeysExtrasSection {
@@ -4743,6 +4758,10 @@ static NSURL *ApolloWriteExportedLogFile(NSString *logs) {
     ApolloReduceRateLimitingSetEnabled(sender.isOn);
 }
 
+- (void)forYouHomeFeedSwitchToggled:(UISwitch *)sender {
+    ApolloForYouHomeFeedSetEnabled(sender.isOn);
+}
+
 // Modern Chat / Modmail are a plain app-wide choice for every account.
 - (void)modernRedditChatSwitchToggled:(UISwitch *)sender {
     [[NSUserDefaults standardUserDefaults] setBool:sender.isOn forKey:UDKeyUseModernRedditChat];
@@ -5288,6 +5307,20 @@ static NSURL *ApolloWriteExportedLogFile(NSString *logs) {
                                              selector:@selector(apollo_reduceRateLimitingDidChange:)
                                                  name:ApolloReduceRateLimitingDidChangeNotification
                                                object:nil];
+    // Home's ••• menu can change this while the screen stays on the stack.
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(apollo_forYouHomeFeedDidChange:)
+                                                 name:ApolloForYouHomeFeedDidChangeNotification
+                                               object:nil];
+}
+- (void)apollo_forYouHomeFeedDidChange:(NSNotification *)notification {
+    (void)notification;
+    UITableViewCell *cell = [self cellForRowID:@"api.forYouHomeFeed"];
+    for (UIView *subview in cell.contentView.subviews) {
+        if (![subview isKindOfClass:[UISwitch class]]) continue;
+        UISwitch *toggle = (UISwitch *)subview;
+        if (toggle.isOn != sForYouHomeFeed) [toggle setOn:sForYouHomeFeed animated:YES];
+    }
 }
 - (void)apollo_reduceRateLimitingDidChange:(NSNotification *)notification {
     (void)notification;
