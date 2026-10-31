@@ -1,0 +1,16 @@
+name: For You tests
+on:
+  push:
+    branches: [ci/for-you-tests]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: For You feed
+        run: sh tests/run_for_you_feed_tests.sh
+      - name: Web JSON routes
+        run: sh tests/run_web_json_routes_tests.sh
