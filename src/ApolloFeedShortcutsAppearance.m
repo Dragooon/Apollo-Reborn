@@ -4,6 +4,8 @@
 #include <stdlib.h>
 
 #import "ApolloCommon.h"
+#import "ApolloState.h"
+#import "ApolloWebJSON.h"
 #import "UserDefaultConstants.h"
 
 static NSString * const kApolloFeedShortcutShortTitles[] = {
@@ -121,6 +123,9 @@ NSString *ApolloFeedShortcutRowTitle(NSInteger index) {
 }
 
 NSString *ApolloFeedShortcutDetail(NSInteger index) {
+    if (index == 0 && sWebJSONEnabled && sForYouHomeFeed && ApolloWebJSONHasUsableSession()) {
+        return @"For You and subscriptions";
+    }
     return index >= 0 && index < 4 ? kApolloFeedShortcutDetails[index] : @"";
 }
 

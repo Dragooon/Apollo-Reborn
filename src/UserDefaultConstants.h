@@ -637,6 +637,11 @@ static NSString *const UDKeyReduceRateLimiting = @"ReduceRateLimiting";
 // API-key-free sign-in, or at the first rate limit for accounts that signed in
 // before the prompt existed), so it never asks twice. Not user-facing.
 static NSString *const UDKeyReduceRateLimitingOffered = @"ReduceRateLimitingOffered";
+// Home shows Reddit's For You feed for API-key-free accounts, in place of
+// subscriptions at the Best and Hot sorts (ApolloForYouFeed.h). Switched from
+// Home's ••• menu or Apollo Reborn settings. No effect on API-key accounts.
+// Default YES.
+static NSString *const UDKeyForYouHomeFeed = @"ForYouHomeFeed";
 // Use Route Updates (ApolloWebJSONRouteUpdates.m). While API-Key-Free Mode is
 // on, fetch keyless-routes.json from the repository so maintainers can change
 // which reddit.com routes blocked API-key-free reads take without a release.

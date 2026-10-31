@@ -365,6 +365,13 @@ ApolloWebJSONTaskCompletion ApolloWebJSONShareAccountRead(NSString *username, NS
 // resumed, so cancelling it can't cancel the request another caller waits on.
 NSURLSessionDataTask *ApolloWebJSONSharedReadPlaceholderTask(void);
 
+// One page of Home's For You feed for a web-session account (ApolloForYouFeed.h).
+// `after` is Apollo's cursor, nil or empty for the first page. Exactly one of
+// `listing` and `error` is set. `response` stands in for the listing's HTTP
+// response. `completion` runs on a background queue. Any thread.
+typedef void (^ApolloWebJSONForYouCompletion)(NSHTTPURLResponse *response, NSDictionary *listing, NSError *error);
+void ApolloWebJSONFetchForYouPage(NSString *username, NSString *after, ApolloWebJSONForYouCompletion completion);
+
 // How many times a write from this web-session account has been sent or
 // answered this launch (the count the sharing above starts over on). An answer
 // kept for longer elsewhere is stale once it moves. Any thread.
