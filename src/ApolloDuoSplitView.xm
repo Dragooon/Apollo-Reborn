@@ -2091,10 +2091,11 @@ static void ApolloDuoPostsSetOverlay(ApolloDuoSplitState *state, BOOL visible) {
     ApolloLog(@"[DuoSplit] posts overlay visible=%d animated=%d anchored=%d", visible, animate, anchor != nil);
     ApolloDuoPostsChangeColumns(state, animate, visible, ^{
         host.postsOverlayVisible = visible;
-    }, anchor ? ^{
+    }, ^{
+        if (!anchor) return;
         ApolloDuoRestoreFeedAnchor(table, anchor);
         [table layoutIfNeeded];
-    } : nil);
+    });
 }
 
 static void ApolloDuoPostsSetDetail(ApolloDuoSplitState *state, UIViewController *page, BOOL animated) {
