@@ -1,0 +1,146 @@
+name: Signed install
+
+# Signs a "Build IPA" run's output for the owner's own registered devices, for
+# scripts/ota-publish-fork.sh to serve as an install link. The artifact is sealed
+# to the public key in the variable CC_OTA_PUBLIC_KEY, because a signed build
+# carries owner-specific values and this repo's artifacts are public.
+#
+# The "signing" environment only deploys from main and holds:
+#   APOLLO_SIGNING_P12_BASE64, APOLLO_SIGNING_P12_PASSWORD  certificate and key
+#   APOLLO_BUNDLE_ID                                        the app's bundle ID
+#   APOLLO_PROFILE_<NAME>                                   one provisioning profile per target
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Run ID of the Build IPA run to sign
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  package:
+    runs-on: macos-15
+    timeout-minutes: 30
+    environment: signing
+    steps:
+      - name: Check out the scripts
+        uses: actions/checkout@v4
+
+      - name: Download the build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]] || { echo "bad run ID"; exit 1; }
+          name=$(gh run view "$BUILD_RUN_ID" -R "$GITHUB_REPOSITORY" --json headSha --jq .headSha)
+          printf 'BUILD_SHA=%s\n' "$name" >> "$GITHUB_ENV"
+          artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/artifacts" --jq '[.artifacts[].name | select(endswith(".ipa"))][0]')
+          [[ -n "$artifact" ]] || { echo "the run has no IPA artifact"; exit 1; }
+          gh run download "$BUILD_RUN_ID" -R "$GITHUB_REPOSITORY" -n "$artifact" -D "$RUNNER_TEMP/build"
+          mv "$RUNNER_TEMP/build/"*.ipa "$RUNNER_TEMP/input.ipa"
+
+      - name: Set up the signing certificate
+        env:
+          APOLLO_SIGNING_P12_BASE64: ${{ secrets.APOLLO_SIGNING_P12_BASE64 }}
+          APOLLO_SIGNING_P12_PASSWORD: ${{ secrets.APOLLO_SIGNING_P12_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 32)
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$APOLLO_SIGNING_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$APOLLO_SIGNING_P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/signing.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity=$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)
+          [[ -n "$identity" ]] || { echo "no signing identity in the certificate"; exit 1; }
+          printf 'SIGNING_IDENTITY=%s\n' "$identity" >> "$GITHUB_ENV"
+
+      - name: Rebrand and embed the profiles
+        env:
+          APOLLO_BUNDLE_ID: ${{ secrets.APOLLO_BUNDLE_ID }}
+          PROFILE_APP: ${{ secrets.APOLLO_PROFILE_APP }}
+          PROFILE_INTENTIONS: ${{ secrets.APOLLO_PROFILE_APOLLOINTENTIONS }}
+          PROFILE_OPENIN: ${{ secrets.APOLLO_PROFILE_OPENINUIEXTENSION }}
+          PROFILE_APOLLOFARI: ${{ secrets.APOLLO_PROFILE_APOLLOFARI }}
+          PROFILE_APOLLOFARI_LEGACY: ${{ secrets.APOLLO_PROFILE_APOLLOFARILEGACY }}
+          PROFILE_NOTIFICATION_CONTENT: ${{ secrets.APOLLO_PROFILE_NOTIFICATIONCONTENTEXTENSION }}
+          PROFILE_NOTIFICATION_SERVICE: ${{ secrets.APOLLO_PROFILE_NOTIFICATIONSERVICEEXTENSION }}
+          PROFILE_WIDGETS: ${{ secrets.APOLLO_PROFILE_APOLLOREBORNWIDGETS }}
+        run: |
+          bash scripts/rebrand-ipa.sh "$RUNNER_TEMP/input.ipa" "$APOLLO_BUNDLE_ID" -o "$RUNNER_TEMP/rebranded.ipa"
+          work="$RUNNER_TEMP/unpacked"
+          mkdir "$work"
+          (cd "$work" && unzip -q "$RUNNER_TEMP/rebranded.ipa")
+          app="$work/Payload/Apollo.app"
+
+          embed() {  # embed <bundle dir> <base64 profile>
+            local bundle=$1 profile=$2 bundle_id expected actual
+            [[ -d "$bundle" ]] || { echo "::error::no bundle at ${bundle#$work/}"; exit 1; }
+            [[ -n "$profile" ]] || { echo "::error::no profile for ${bundle#$work/}"; exit 1; }
+            printf '%s' "$profile" | base64 --decode > "$bundle/embedded.mobileprovision"
+            bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Info.plist")
+            security cms -D -i "$bundle/embedded.mobileprovision" > "$RUNNER_TEMP/profile.plist"
+            actual=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/profile.plist")
+            [[ "${actual#*.}" == "$bundle_id" ]] || { echo "::error::${bundle#$work/}: bundle ID doesn't match its profile"; exit 1; }
+          }
+          embed "$app" "$PROFILE_APP"
+          embed "$app/PlugIns/ApolloIntentions.appex" "$PROFILE_INTENTIONS"
+          embed "$app/PlugIns/OpenInUIExtension.appex" "$PROFILE_OPENIN"
+          embed "$app/PlugIns/Apollofari.appex" "$PROFILE_APOLLOFARI"
+          embed "$app/PlugIns/ApollofariLegacy.appex" "$PROFILE_APOLLOFARI_LEGACY"
+          embed "$app/PlugIns/NotificationContentExtension.appex" "$PROFILE_NOTIFICATION_CONTENT"
+          embed "$app/PlugIns/NotificationServiceExtension.appex" "$PROFILE_NOTIFICATION_SERVICE"
+          embed "$app/PlugIns/ApolloRebornWidgets.appex" "$PROFILE_WIDGETS"
+          rm -f "$RUNNER_TEMP/profile.plist"
+
+          (cd "$work" && zip -qry "$RUNNER_TEMP/provisioned.ipa" Payload)
+          rm -rf "$work"
+
+      - name: Sign
+        run: bash scripts/resign-ipa-codesign.sh "$RUNNER_TEMP/provisioned.ipa" "$SIGNING_IDENTITY" -o "$RUNNER_TEMP/Apollo-Reborn.ipa" | sed 's/^/  /'
+
+      - name: Seal the package
+        env:
+          CC_OTA_PUBLIC_KEY: ${{ vars.CC_OTA_PUBLIC_KEY }}
+          APOLLO_BUNDLE_ID: ${{ secrets.APOLLO_BUNDLE_ID }}
+        run: |
+          package="$RUNNER_TEMP/package"
+          output="$RUNNER_TEMP/install-package"
+          mkdir "$package" "$output"
+          mv "$RUNNER_TEMP/Apollo-Reborn.ipa" "$package/"
+          unzip -p "$package/Apollo-Reborn.ipa" 'Payload/Apollo.app/Info.plist' > "$RUNNER_TEMP/info.plist"
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$RUNNER_TEMP/info.plist")
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$RUNNER_TEMP/info.plist")
+          cat > "$package/package.env" <<ENV
+          bundle=$APOLLO_BUNDLE_ID
+          version=$version
+          bundle_version=$build
+          sha=$BUILD_SHA
+          built=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          ENV
+          sed -i '' 's/^ *//' "$package/package.env"
+          printf '%s\n' "$CC_OTA_PUBLIC_KEY" > "$RUNNER_TEMP/public.pem"
+          ( umask 077; openssl rand -hex 32 > "$RUNNER_TEMP/seal.key" )
+          tar -C "$package" -cf - . | openssl enc -aes-256-cbc -pbkdf2 -md sha256 -salt -pass "file:$RUNNER_TEMP/seal.key" -out "$output/install.tar.enc"
+          openssl pkeyutl -encrypt -pubin -inkey "$RUNNER_TEMP/public.pem" -pkeyopt rsa_padding_mode:oaep -in "$RUNNER_TEMP/seal.key" -out "$output/install.key.enc"
+          rm -rf "$package" "$RUNNER_TEMP/seal.key"
+
+      - name: Upload the sealed package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: install-package
+          path: ${{ runner.temp }}/install-package
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Remove the keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
