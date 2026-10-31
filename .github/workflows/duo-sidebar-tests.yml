@@ -1,0 +1,21 @@
+name: Duo sidebar tests
+on:
+  push:
+    branches: [ci/duo-sidebar-tests]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Duo host tests
+        run: |
+          status=0
+          for test_script in tests/run_duo_*_tests.sh; do
+            echo "::group::$test_script"
+            sh "$test_script" || { echo "FAILED: $test_script"; status=1; }
+            echo "::endgroup::"
+          done
+          exit $status
