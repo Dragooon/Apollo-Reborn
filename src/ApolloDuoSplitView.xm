@@ -33,6 +33,21 @@ static void ApolloDuoPostsStopGeometry(UIView *feed);
 @class ApolloDuoSplitHost;
 static void ApolloDuoToggleFeedLayout(ApolloDuoSplitHost *host);
 static void ApolloDuoToggleVisibleFeedLayout(UIViewController *controller, BOOL enabled);
+static NSUInteger ApolloDuoFeedStackKeptCount(UINavigationController *feed);
+
+// The Posts column on an open Duo, in both orientations: about an iPhone's
+// width, which is what Apollo's rows are built for, so the thread beside it
+// gets the rest. Mail's list measures ~418pt on the same display. Folded like a
+// book the column ends at the fold instead, as system split views do.
+static const CGFloat kApolloDuoPostsColumnWidth = 390.0;
+// The subreddit drawer sits over the Posts column and leaves part of it showing,
+// like Mail's Mailboxes over its list. 320pt is the narrowest iPhone Apollo runs on.
+static const CGFloat kApolloDuoSubredditDrawerWidth = 320.0;
+
+static CGFloat ApolloDuoPostsColumnWidth(CGFloat canvasWidth, BOOL endsAtFold) {
+    if (endsAtFold) return canvasWidth * 0.5;
+    return MIN(kApolloDuoPostsColumnWidth, MAX(240.0, canvasWidth - 240.0));
+}
 
 @protocol ApolloDuoLayoutControl <NSObject>
 - (void)updateFeedLayoutButton;
@@ -249,6 +264,12 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
 @property(nonatomic) BOOL postsShowingDetail;
 @property(nonatomic) BOOL postsSplitEnabled;
 @property(nonatomic) BOOL postsColumnsPaired;
+// Opened portrait: Posts is showing as an overlay over the full-width thread.
+@property(nonatomic) BOOL postsOverlayVisible;
+@property(nonatomic, strong) UIControl *postsOverlayDismiss;
+@property(nonatomic, copy) void (^setPostsOverlay)(BOOL visible);
+@property(nonatomic) BOOL splitButtonShowsSidebar;
+@property(nonatomic, readonly) BOOL canShowPostsOverlay;
 @property(nonatomic, strong) UIView *postsTransitionSnapshot;
 @property(nonatomic, weak) UINavigationController *searchNavigation;
 @property(nonatomic) NSUInteger listAnimationGeneration;
@@ -305,6 +326,15 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
     ]];
     [self.split didMoveToParentViewController:self];
     if (self.subredditList) {
+        // UIKit dims the thread behind the overlay, but with presentsWithGesture
+        // off its display mode is strictly respected, so own the tap to close.
+        self.postsOverlayDismiss = [UIControl new];
+        [self.postsOverlayDismiss addTarget:self action:@selector(dismissPostsOverlay) forControlEvents:UIControlEventTouchUpInside];
+        self.postsOverlayDismiss.hidden = YES;
+        UISwipeGestureRecognizer *overlaySwipe = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(dismissPostsOverlay)];
+        overlaySwipe.direction = UISwipeGestureRecognizerDirectionLeft;
+        [self.postsOverlayDismiss addGestureRecognizer:overlaySwipe];
+        [self.view addSubview:self.postsOverlayDismiss];
         self.listDismiss = [UIControl new];
         self.listDismiss.backgroundColor = [UIColor.blackColor colorWithAlphaComponent:0.12];
         [self.listDismiss addTarget:self action:@selector(dismissList) forControlEvents:UIControlEventTouchUpInside];
@@ -515,9 +545,20 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
     self.subredditList.viewControllers.firstObject.additionalSafeAreaInsets = self.originalListInsets;
     [self.subredditList setNavigationBarHidden:NO animated:NO];
 }
+- (BOOL)canShowPostsOverlay {
+    UINavigationController *feed = self.postsNavigation;
+    return [feed.topViewController isKindOfClass:ApolloClassCommentsViewController]
+        && feed.viewControllers.count > ApolloDuoFeedStackKeptCount(feed);
+}
+- (void)dismissPostsOverlay {
+    if (self.setPostsOverlay) self.setPostsOverlay(NO);
+}
 - (void)updateSplitButton {
-    UIImage *symbol = [UIImage systemImageNamed:@"rectangle.split.2x1"];
-    if (!self.postsSplitEnabled) {
+    // Portrait has no tiled split to turn off, only Posts to show over a thread.
+    BOOL showsSidebar = self.view.bounds.size.width <= self.view.bounds.size.height;
+    self.splitButtonShowsSidebar = showsSidebar;
+    UIImage *symbol = [UIImage systemImageNamed:showsSidebar ? @"sidebar.left" : @"rectangle.split.2x1"];
+    if (!showsSidebar && !self.postsSplitEnabled) {
         // One template image lets the glass button resolve the slash and the
         // symbol together, including appearance and accessibility changes.
         // A separate CGColor layer captures the pre-window system-blue tint.
@@ -542,7 +583,7 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
     configuration.baseForegroundColor = ApolloNavigationChromeColor();
     self.splitButton.configuration = configuration;
     self.splitBarItem.image = symbol;
-    self.splitButton.accessibilityValue = self.postsSplitEnabled ? @"On" : @"Off";
+    self.splitButton.accessibilityValue = (showsSidebar ? self.postsOverlayVisible : self.postsSplitEnabled) ? @"On" : @"Off";
 }
 - (void)toggleSplit {
     if (self.togglePostsSplit) self.togglePostsSplit();
@@ -645,6 +686,11 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
     });
 }
 - (void)splitViewController:(UISplitViewController *)splitViewController willChangeToDisplayMode:(UISplitViewControllerDisplayMode)displayMode {
+    if (self.postsOverlayVisible && displayMode == UISplitViewControllerDisplayModeSecondaryOnly) {
+        // UIKit closed the overlay itself. Rejoin the stacks once it has finished.
+        __weak ApolloDuoSplitHost *weakHost = self;
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakHost dismissPostsOverlay]; });
+    }
     if (!self.accountHeader) return;
     // The host is outside UIKit's column hierarchy, so a column-only change
     // need not lay it out. Use the announced mode (displayMode still reports
@@ -807,8 +853,12 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
     [super viewDidLayoutSubviews];
     [self scheduleSplitSafeAreaSync];
     if (self.subredditList) {
-        CGFloat width = MIN(360, self.view.bounds.size.width - 96);
+        CGFloat width = MIN(kApolloDuoSubredditDrawerWidth, self.view.bounds.size.width - 96);
         BOOL portrait = self.view.bounds.size.width <= self.view.bounds.size.height;
+        CGFloat overlayColumn = self.split.primaryColumnWidth;
+        self.postsOverlayDismiss.frame = CGRectMake(overlayColumn, 0, MAX(0, self.view.bounds.size.width - overlayColumn), self.view.bounds.size.height);
+        self.postsOverlayDismiss.hidden = !self.postsOverlayVisible;
+        if (self.splitButtonShowsSidebar != portrait) [self updateSplitButton];
         CGFloat bottom = CGRectGetMaxY(self.view.bounds) - 12;
         if (portrait) {
             // The floating bottom tab bar overlays this full-height host.
@@ -833,7 +883,7 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
         // The drawer covers/intercepts its underlying controls. Keep the
         // navigation items installed so opening it never reflows the bar.
         self.listButton.hidden = NO;
-        self.splitButton.hidden = portrait;
+        self.splitButton.hidden = portrait && !self.postsOverlayVisible && ![self canShowPostsOverlay];
         // UIKit lays out the real controls in the title row, above the search
         // field. They follow their content column and the bar's safe area.
         UINavigationController *navigation = self.postsNavigation;
@@ -1032,11 +1082,15 @@ CGFloat ApolloDuoSplitTransitionContentWidth(UIView *view, CGFloat trailingInset
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(owner.navigationController, NO);
     CGFloat width = sDuoSplitTargetSize.width;
     if (state.feed && state.split && MIN(sDuoSplitTargetSize.width, sDuoSplitTargetSize.height) >= 600) {
-        if (owner.navigationController == state.primary) return MIN(360, width - 96);
-        BOOL paired = state.host.postsSplitEnabled && sDuoSplitTargetSize.width > sDuoSplitTargetSize.height && (state.secondary.viewControllers.count > 1 || state.feed.viewControllers.count > 1);
-        if (paired) width *= 0.5;
-        BOOL feedColumn = paired && owner.navigationController == state.feed;
-        return MAX(0, width - (!feedColumn && sDuoSplitTargetSize.width > sDuoSplitTargetSize.height ? trailingInset : 0));
+        if (owner.navigationController == state.primary) return MIN(kApolloDuoSubredditDrawerWidth, width - 96);
+        BOOL landscape = sDuoSplitTargetSize.width > sDuoSplitTargetSize.height;
+        BOOL paired = state.host.postsSplitEnabled && landscape && (state.secondary.viewControllers.count > 1 || state.feed.viewControllers.count > 1);
+        CGFloat column = ApolloDuoPostsColumnWidth(width, landscape && state.halfWidthSidebar);
+        // The portrait overlay narrows only Posts; the thread keeps its width.
+        BOOL overlaid = !landscape && state.host.postsOverlayVisible;
+        if ((paired || overlaid) && owner.navigationController == state.feed) return column;
+        if (paired) width -= column;
+        return MAX(0, width - (landscape ? trailingInset : 0));
     }
     if (state.split && width >= 800.0 && width > sDuoSplitTargetSize.height) {
         UISplitViewController *split = state.split;
@@ -1074,6 +1128,17 @@ BOOL ApolloDuoSplitAllowsNavigationSwipe(UINavigationController *nav) {
     if (state.changing) return NO;
     if (!state.split) return YES;
     return !state.host.listVisible && (nav == state.feed || nav == state.secondary);
+}
+
+BOOL ApolloDuoSplitRevealPostsOverlay(UINavigationController *nav) {
+    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
+    if (!state.split || state.feed != nav || state.changing || state.host.postsOverlayVisible
+        || state.host.listVisible || state.host.view.bounds.size.width > state.host.view.bounds.size.height) return NO;
+    // A deeper page still goes Back first, one level at a time.
+    if (nav.viewControllers.count != ApolloDuoFeedStackKeptCount(nav) + 1) return NO;
+    if (![nav.topViewController isKindOfClass:ApolloClassCommentsViewController]) return NO;
+    state.host.setPostsOverlay(YES);
+    return YES;
 }
 
 BOOL ApolloDuoSplitCanRevealPostsListWithSwipe(UINavigationController *nav) {
@@ -1315,18 +1380,25 @@ static void ApolloDuoSplitApplySidebarWidth(ApolloDuoSplitState *state, BOOL hal
     // display is 475.5pt, and retaining the 420pt cap misses the hinge.
     CGSize canvas = sDuoSplitResizingTabs ? sDuoSplitTargetSize : state.host.view.bounds.size;
     BOOL postsLandscape = state.feed && canvas.width > canvas.height;
-    CGFloat half = canvas.width * 0.5;
+    CGFloat postsColumn = ApolloDuoPostsColumnWidth(canvas.width, postsLandscape && halfWidth);
     // UIKit may keep an earlier sidebar width across column replacement.
-    // Bound both ends for Posts so its actual divider stays at the midpoint.
-    CGFloat maximum = postsLandscape ? half : (state.feed || halfWidth ? CGFLOAT_MAX : 420.0);
+    // Bound both ends for Posts so its divider lands exactly where it's meant to.
+    CGFloat maximum = state.feed ? postsColumn : (halfWidth ? CGFLOAT_MAX : 420.0);
+    if (state.feed) {
+        // Portrait layers Posts over the thread (showColumn: picks the mode that
+        // fits this behavior); landscape tiles them side by side.
+        UISplitViewControllerSplitBehavior behavior = postsLandscape
+            ? UISplitViewControllerSplitBehaviorTile : UISplitViewControllerSplitBehaviorOverlay;
+        if (split.preferredSplitBehavior != behavior) split.preferredSplitBehavior = behavior;
+    }
     // Settings' widest native row is "Touch ID & Passcode" + its value +
     // disclosure: a third of the flat inner display (~317pt) cut "Off" to "O".
     // Give that sidebar enough room for the value at the default text size.
     CGFloat sidebarMinimum = [state.kind isEqualToString:@"settings"] ? 340.0 : 240.0;
-    CGFloat minimum = postsLandscape ? half : sidebarMinimum;
+    CGFloat minimum = state.feed ? postsColumn : sidebarMinimum;
     if (split.maximumPrimaryColumnWidth != maximum) split.maximumPrimaryColumnWidth = maximum;
     if (split.minimumPrimaryColumnWidth != minimum) split.minimumPrimaryColumnWidth = minimum;
-    CGFloat fraction = halfWidth || state.feed ? 0.5 : 1.0 / 3.0;
+    CGFloat fraction = state.feed ? (canvas.width > 0.0 ? postsColumn / canvas.width : 0.5) : (halfWidth ? 0.5 : 1.0 / 3.0);
     if (halfWidth && !state.feed && canvas.width > 0.0) {
         // End the sidebar at the fold itself rather than an assumed midpoint.
         CGRect fold = ApolloDuoActiveVerticalDivision(state.host.view);
@@ -1355,7 +1427,8 @@ static BOOL ApolloDuoPostsHasLandscapeColumns(ApolloDuoSplitState *state) {
 }
 
 static BOOL ApolloDuoPostsUsesSplit(ApolloDuoSplitState *state) {
-    return state.host.postsSplitEnabled && ApolloDuoPostsHasLandscapeColumns(state);
+    BOOL landscape = ApolloDuoPostsHasLandscapeColumns(state);
+    return landscape ? state.host.postsSplitEnabled : state.host.postsOverlayVisible;
 }
 
 
@@ -1399,8 +1472,7 @@ static void ApolloDuoPostsSyncColumnsWithAnimation(ApolloDuoSplitState *state, B
     // Full-width comments stay on Apollo's native feed navigation stack.
     // Only a real split (or its width-toggle preparation) needs two stacks.
     // Never migrate a page while Apollo's native push/pop owns its transition.
-    BOOL separateComments = ApolloDuoPostsHasLandscapeColumns(state)
-        && (state.host.postsSplitEnabled || state.postsTogglingSplit);
+    BOOL separateComments = ApolloDuoPostsUsesSplit(state) || state.postsTogglingSplit;
     NSUInteger feedKept = ApolloDuoFeedStackKeptCount(state.feed);
     if (separateComments && state.feed.viewControllers.count > feedKept && !state.feed.transitionCoordinator) {
         NSArray *pushed = [state.feed.viewControllers subarrayWithRange:NSMakeRange(feedKept, state.feed.viewControllers.count - feedKept)];
@@ -1422,6 +1494,10 @@ static void ApolloDuoPostsSyncColumnsWithAnimation(ApolloDuoSplitState *state, B
     }
     [state.host.viewIfLoaded setNeedsLayout];
     BOOL detail = state.secondary.viewControllers.count > 1;
+    // The overlay only exists over a thread in portrait: rotating or choosing a
+    // subreddit (which clears the thread) ends it.
+    if (state.host.postsOverlayVisible && (!detail || ApolloDuoPostsHasLandscapeColumns(state)))
+        state.host.postsOverlayVisible = NO;
     BOOL paired = detail && ApolloDuoPostsUsesSplit(state);
     UISplitViewController *split = state.split;
     // A hidden primary can lose its parent while UIKit still retains it as
@@ -1834,16 +1910,11 @@ static void ApolloDuoCommentsScheduleLayoutControl(UIViewController *controller)
 // A split toggle changes only the width of an already open comments page.
 // Both native column controllers stay attached; UIKit owns their divider,
 // clipping, safe areas, and the disappearance/reappearance of the feed.
-static void ApolloDuoPostsToggleSplit(ApolloDuoSplitState *state) {
-    if (!state.feed || state.changing || state.postsTogglingSplit
-        || state.feed.transitionCoordinator || state.secondary.transitionCoordinator) return;
+// The landscape Split toggle and the portrait overlay are the same move: put the
+// thread on its own stack, change the flag, let UIKit move the column, rejoin.
+static void ApolloDuoPostsChangeColumns(ApolloDuoSplitState *state, BOOL animate, BOOL separateFirst,
+                                        void (^flag)(void), void (^afterColumns)(void)) {
     UIView *surface = state.host.view;
-    [surface layoutIfNeeded];
-    BOOL hasComments = state.secondary.viewControllers.count > 1 || state.feed.viewControllers.count > 1;
-    BOOL animate = surface.window && ApolloDuoPostsHasLandscapeColumns(state)
-        && hasComments && !UIAccessibilityIsReduceMotionEnabled();
-    os_log_debug(ApolloFixLog(), "[ApolloFix] [DuoSplit] toggle enabled=%d animated=%d reduceMotion=%d",
-        !state.host.postsSplitEnabled, animate, UIAccessibilityIsReduceMotionEnabled());
     ApolloDuoPostsStopGeometry(state.feed.viewIfLoaded);
     ApolloDuoPostsStopGeometry(state.secondary.viewIfLoaded);
     [state.host.postsTransitionSnapshot removeFromSuperview];
@@ -1870,21 +1941,21 @@ static void ApolloDuoPostsToggleSplit(ApolloDuoSplitState *state) {
             [table layoutIfNeeded];
         }
     };
-    if (!state.host.postsSplitEnabled && state.feed.viewControllers.count > 1) {
+    if (separateFirst) {
         // Move the SAME comments page to a full-width secondary first. Its
         // appearance and geometry stay fixed; UIKit can then animate the
-        // retained columns to 50/50 without a pop/re-push or an empty surface.
+        // retained columns into place without a pop/re-push or an empty surface.
         [UIView performWithoutAnimation:^{
             ApolloDuoPostsSyncColumns(state);
             commitTables();
         }];
     }
-    state.host.postsSplitEnabled = !state.host.postsSplitEnabled;
-    [NSUserDefaults.standardUserDefaults setBool:!state.host.postsSplitEnabled forKey:@"ApolloDuoPostsSplitDisabled"];
+    flag();
     [state.host updateSplitButton];
     void (^updateColumns)(void) = ^{
         ApolloDuoPostsSyncColumnsWithAnimation(state, animate);
         commitTables();
+        if (afterColumns) [UIView performWithoutAnimation:afterColumns];
     };
     void (^finish)(void) = ^{
         state.postsTogglingSplit = NO;
@@ -1908,6 +1979,27 @@ static void ApolloDuoPostsToggleSplit(ApolloDuoSplitState *state) {
         [UIView performWithoutAnimation:updateColumns];
         finish();
     }
+}
+
+static void ApolloDuoPostsSetOverlay(ApolloDuoSplitState *state, BOOL visible);
+
+static void ApolloDuoPostsToggleSplit(ApolloDuoSplitState *state) {
+    if (!state.feed || state.changing || state.postsTogglingSplit
+        || state.feed.transitionCoordinator || state.secondary.transitionCoordinator) return;
+    if (!ApolloDuoPostsHasLandscapeColumns(state)) {
+        ApolloDuoPostsSetOverlay(state, !state.host.postsOverlayVisible);
+        return;
+    }
+    UIView *surface = state.host.view;
+    [surface layoutIfNeeded];
+    BOOL hasComments = state.secondary.viewControllers.count > 1 || state.feed.viewControllers.count > 1;
+    BOOL animate = surface.window && hasComments && !UIAccessibilityIsReduceMotionEnabled();
+    os_log_debug(ApolloFixLog(), "[ApolloFix] [DuoSplit] toggle enabled=%d animated=%d reduceMotion=%d",
+        !state.host.postsSplitEnabled, animate, UIAccessibilityIsReduceMotionEnabled());
+    ApolloDuoPostsChangeColumns(state, animate, !state.host.postsSplitEnabled && state.feed.viewControllers.count > 1, ^{
+        state.host.postsSplitEnabled = !state.host.postsSplitEnabled;
+        [NSUserDefaults.standardUserDefaults setBool:!state.host.postsSplitEnabled forKey:@"ApolloDuoPostsSplitDisabled"];
+    }, nil);
 }
 
 // Read the model identity without loading the new controller's view. Feed
@@ -1938,8 +2030,8 @@ static NSString *ApolloDuoCommentsPostID(UIViewController *page) {
 @end
 @implementation ApolloDuoFeedAnchor @end
 
-static ApolloDuoFeedAnchor *ApolloDuoCaptureFeedAnchor(UITableView *table) {
-    if (!table.window || table.dragging || table.decelerating) return nil;
+static ApolloDuoFeedAnchor *ApolloDuoCaptureFeedAnchorAnywhere(UITableView *table) {
+    if (table.dragging || table.decelerating) return nil;
     UIEdgeInsets inset = table.adjustedContentInset;
     CGFloat visible = table.bounds.size.height - inset.top - inset.bottom;
     CGFloat middle = table.contentOffset.y + inset.top + visible / 2;
@@ -1956,6 +2048,10 @@ static ApolloDuoFeedAnchor *ApolloDuoCaptureFeedAnchor(UITableView *table) {
     return nil;
 }
 
+static ApolloDuoFeedAnchor *ApolloDuoCaptureFeedAnchor(UITableView *table) {
+    return table.window ? ApolloDuoCaptureFeedAnchorAnywhere(table) : nil;
+}
+
 static void ApolloDuoRestoreFeedAnchor(UITableView *table, ApolloDuoFeedAnchor *anchor) {
     NSIndexPath *path = anchor.path;
     if (!path || !table.window || path.section >= table.numberOfSections
@@ -1970,6 +2066,35 @@ static void ApolloDuoRestoreFeedAnchor(UITableView *table, ApolloDuoFeedAnchor *
     ApolloLog(@"[DuoSplit] feed anchor: row %ld.%ld offset %.1f -> %.1f", (long)path.section, (long)path.row,
               table.contentOffset.y, offset);
     [table setContentOffset:CGPointMake(table.contentOffset.x, offset) animated:NO];
+}
+
+// Opened portrait's first sidebar level, as in Mail: Posts over the thread, with
+// the subreddit drawer a further level above it. The thread stays on Apollo's
+// native feed stack until this is asked for, so ordinary pushes and Back keep
+// Apollo's own animator, and it rejoins that stack when the overlay closes.
+static void ApolloDuoPostsSetOverlay(ApolloDuoSplitState *state, BOOL visible) {
+    ApolloDuoSplitHost *host = state.host;
+    if (!state.feed || !state.split || state.changing || state.postsTogglingSplit
+        || host.postsOverlayVisible == visible || ApolloDuoPostsHasLandscapeColumns(state)
+        || state.feed.transitionCoordinator || state.secondary.transitionCoordinator) return;
+    if (visible && !host.canShowPostsOverlay) return;
+    UIView *surface = host.view;
+    BOOL animate = surface.window && !UIAccessibilityIsReduceMotionEnabled();
+    [surface layoutIfNeeded];
+    if (!visible) [host setListVisible:NO animated:animate];
+    // Posts rewraps as it narrows. Keep the reader's place in it. Under the
+    // thread it isn't in the window, so read the place without that check.
+    NSUInteger feedPages = ApolloDuoFeedStackKeptCount(state.feed);
+    UIViewController *feedPage = feedPages ? state.feed.viewControllers[feedPages - 1] : nil;
+    UITableView *table = ApolloDuoSplitFindTable(feedPage.viewIfLoaded);
+    ApolloDuoFeedAnchor *anchor = visible ? ApolloDuoCaptureFeedAnchorAnywhere(table) : nil;
+    ApolloLog(@"[DuoSplit] posts overlay visible=%d animated=%d anchored=%d", visible, animate, anchor != nil);
+    ApolloDuoPostsChangeColumns(state, animate, visible, ^{
+        host.postsOverlayVisible = visible;
+    }, anchor ? ^{
+        ApolloDuoRestoreFeedAnchor(table, anchor);
+        [table layoutIfNeeded];
+    } : nil);
 }
 
 static void ApolloDuoPostsSetDetail(ApolloDuoSplitState *state, UIViewController *page, BOOL animated) {
@@ -2662,6 +2787,9 @@ static void ApolloDuoSplitOpen(ApolloDuoSplitState *state) {
             ApolloDuoSplitState *live = weakPostsState;
             ApolloDuoPostsToggleSplit(live);
         };
+        postsHost.setPostsOverlay = ^(BOOL visible) {
+            ApolloDuoPostsSetOverlay(weakPostsState, visible);
+        };
         if (split.parentViewController) {
             [split willMoveToParentViewController:nil];
             [split.view removeFromSuperview];
@@ -2813,6 +2941,7 @@ static void ApolloDuoSplitClose(ApolloDuoSplitState *state, BOOL preserveDetail)
         // Stop suppressing the feed before its item setter runs, then discard
         // this presentation's snapshot so reopening cannot reuse stale items.
         state.host.postsColumnsPaired = NO;
+        state.host.postsOverlayVisible = NO;
         if (state.feedActions) {
             (state.feedActionsItem ?: state.feed.viewControllers.firstObject.navigationItem).rightBarButtonItems = state.feedActions;
         }
@@ -3274,6 +3403,7 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
             if (incomingPost.length && [incomingPost isEqualToString:visiblePost]
                 && !ApolloReadSwiftStringIvar(page, "commentID").length) {
                 ApolloLog(@"[DuoSplit] current post reselected; keeping comments and scroll position");
+                if (state.host.postsOverlayVisible) ApolloDuoPostsSetOverlay(state, NO);
                 return YES;
             }
         }
@@ -3303,7 +3433,10 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
                 [state.feed pushViewController:page animated:animated];
                 return YES;
             }
-            ApolloDuoPostsSetDetail(state, page, animated);
+            // From the portrait overlay the thread changes behind it as it closes.
+            BOOL fromOverlay = state.host.postsOverlayVisible;
+            ApolloDuoPostsSetDetail(state, page, animated && !fromOverlay);
+            if (fromOverlay) ApolloDuoPostsSetOverlay(state, NO);
         } else return NO;
         ApolloDuoPostsSyncColumns(state);
         return YES;

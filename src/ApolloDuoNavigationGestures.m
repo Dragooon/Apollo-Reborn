@@ -7,18 +7,22 @@
 // visible pane can start well inside that surface, and the outer stack is a
 // containment host. Qualify a right swipe at the *pane's* left content edge,
 // then perform one native animated Back on that exact navigation controller.
-// At the feed root the same gesture reveals the subreddit drawer. Calling the
+// At the feed root the same gesture reveals the subreddit drawer, and over a
+// thread in opened portrait it reveals Posts first, as Mail's two levels do. Calling the
 // native pop entry point keeps the author's feed/thread restoration animation.
 // Keep row swipe actions elsewhere, and honor Apollo's navigation-gesture opt-out.
 static BOOL ApolloDuoBackSwipeCanNavigate(UINavigationController *navigation) {
+    // With a thread beside or under it, the feed column isn't the detail stack,
+    // but its root can still open the subreddit drawer.
+    BOOL revealsList = ApolloDuoSplitCanRevealPostsListWithSwipe(navigation);
     BOOL eligible = ApolloDeviceIsDuo() && navigation.viewIfLoaded.window
-        && (navigation.viewControllers.count > 1 || ApolloDuoSplitCanRevealPostsListWithSwipe(navigation))
+        && (navigation.viewControllers.count > 1 || revealsList)
         && ![NSUserDefaults.standardUserDefaults boolForKey:@"DisableNavigationGestures"]
         && !ApolloDuoSplitIsResizing() && !navigation.transitionCoordinator
         && !navigation.presentedViewController && !navigation.topViewController.presentedViewController
         && !navigation.isBeingDismissed
         && ApolloDuoSplitAllowsNavigationSwipe(navigation)
-        && ApolloDuoSplitDetailNavigation(navigation) == navigation;
+        && (revealsList || ApolloDuoSplitDetailNavigation(navigation) == navigation);
     if (!eligible) return NO;
     // Sheets can belong to the containing split, tab, or outer navigation
     // controller rather than the pane itself. Never navigate behind one.
@@ -76,6 +80,10 @@ static BOOL ApolloDuoBackSwipeAcceptsPoint(UINavigationController *navigation, C
     if (navigation.viewControllers.count == 1) {
         ApolloLog(@"[DuoSwipe] feed root: reveal subreddit drawer");
         ApolloDuoSplitRevealPostsList(navigation);
+        return;
+    }
+    if (ApolloDuoSplitRevealPostsOverlay(navigation)) {
+        ApolloLog(@"[DuoSwipe] thread in portrait: reveal Posts overlay");
         return;
     }
     ApolloLog(@"[DuoSwipe] Back in pane; stack pages=%lu", (unsigned long)navigation.viewControllers.count);

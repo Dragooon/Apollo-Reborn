@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 - Show Reddit's **For You** feed on **Home** for **API-Key-Free** accounts, with recommended posts mixed in, at the Best and Hot sorts
   - Switch back with **Show Subscriptions** in Home's ••• menu, or **For You on Home** in Apollo Reborn settings
   - If the feed can't load, Home shows your subscriptions
+- iPhone Duo: Posts and comments are laid out more like Mail when open
+  - In landscape Posts is about an iPhone wide and comments get the rest; folded like a book they still meet at the fold
+  - In portrait, swipe right on a post's comments (or tap the sidebar button) to show Posts over them, and swipe right again for your subreddits. Back stays in the navigation bar
 
 ## [v4.0.1] - 2026-10-30
 
