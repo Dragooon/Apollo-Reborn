@@ -109,6 +109,13 @@ static BOOL ApolloDuoSplitRevealPostsList(UINavigationController *nav) {
     drawerReveals++;
     return YES;
 }
+static BOOL overlayAccepts;
+static NSUInteger overlayReveals;
+static BOOL ApolloDuoSplitRevealPostsOverlay(__unused UINavigationController *nav) {
+    if (!overlayAccepts) return NO;
+    overlayReveals++;
+    return YES;
+}
 static CGRect ApolloDuoSplitContentFrame(UINavigationController *nav, __unused UIView *view) { return nav.pane; }
 static BOOL UIAccessibilityIsReduceMotionEnabled(void) { return reduceMotion; }
 enum { UISwipeGestureRecognizerDirectionRight = 1, UIGestureRecognizerStateRecognized = 3 };
@@ -216,6 +223,15 @@ int main(void) {
         Check(!ApolloDuoSplitAllowsNavigationSwipe(nav), @"outer shell cannot swipe even when its stack has history");
         Check(ApolloDuoBackSwipeCanNavigate(feed) && ApolloDuoBackSwipeCanNavigate(detail), @"each pane can go Back independently");
         Check(!ApolloDuoSplitCanRevealPostsListWithSwipe(feed), @"feed history takes precedence over menu");
+        ApolloDuoInstallBackSwipe(feed); owner = objc_getAssociatedObject(feed, &kApolloDuoBackSwipe);
+        owner.swipe.state = UIGestureRecognizerStateRecognized;
+        overlayAccepts = YES;
+        [owner swiped:owner.swipe];
+        Check(overlayReveals == 1 && feed.pops == 0, @"thread swipe in portrait reveals Posts without popping");
+        overlayAccepts = NO;
+        [owner swiped:owner.swipe];
+        Check(overlayReveals == 1 && feed.pops == 1, @"swipe still goes Back when the overlay doesn't apply");
+        feed.pops = 0;
         feed.viewControllers = @[feed.viewControllers.firstObject];
         Check(ApolloDuoSplitCanRevealPostsListWithSwipe(feed) && ApolloDuoBackSwipeCanNavigate(feed), @"feed root enables menu swipe even with right thread open");
         detail.viewControllers = @[detail.viewControllers.firstObject];

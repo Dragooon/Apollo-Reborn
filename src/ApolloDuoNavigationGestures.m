@@ -12,17 +12,14 @@
 // native pop entry point keeps the author's feed/thread restoration animation.
 // Keep row swipe actions elsewhere, and honor Apollo's navigation-gesture opt-out.
 static BOOL ApolloDuoBackSwipeCanNavigate(UINavigationController *navigation) {
-    // With a thread beside or under it, the feed column isn't the detail stack,
-    // but its root can still open the subreddit drawer.
-    BOOL revealsList = ApolloDuoSplitCanRevealPostsListWithSwipe(navigation);
     BOOL eligible = ApolloDeviceIsDuo() && navigation.viewIfLoaded.window
-        && (navigation.viewControllers.count > 1 || revealsList)
+        && (navigation.viewControllers.count > 1 || ApolloDuoSplitCanRevealPostsListWithSwipe(navigation))
         && ![NSUserDefaults.standardUserDefaults boolForKey:@"DisableNavigationGestures"]
         && !ApolloDuoSplitIsResizing() && !navigation.transitionCoordinator
         && !navigation.presentedViewController && !navigation.topViewController.presentedViewController
         && !navigation.isBeingDismissed
         && ApolloDuoSplitAllowsNavigationSwipe(navigation)
-        && (revealsList || ApolloDuoSplitDetailNavigation(navigation) == navigation);
+        && ApolloDuoSplitDetailNavigation(navigation) == navigation;
     if (!eligible) return NO;
     // Sheets can belong to the containing split, tab, or outer navigation
     // controller rather than the pane itself. Never navigate behind one.
