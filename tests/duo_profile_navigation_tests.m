@@ -78,6 +78,8 @@
 @interface ApolloDuoSplitHost : NSObject
 @property (nonatomic) BOOL listVisible;
 @property (nonatomic) BOOL lastListAnimated;
+@property (nonatomic) BOOL postsOverlayVisible;
+@property (nonatomic) BOOL postsThreadSeparated;
 - (void)setListVisible:(BOOL)visible animated:(BOOL)animated;
 @end
 @implementation ApolloDuoSplitHost
@@ -115,6 +117,8 @@ static BOOL ApolloDuoSplitShouldOpen(__unused id tabs) { return landscape; }
 static BOOL sDuoSplitPushingFeedLink;
 static BOOL ApolloDuoSplitIsUnfolded(void) { return unfolded; }
 static NSString *ApolloDuoSplitKind(UIViewController *page) { return page.kind; }
+static BOOL ApolloDuoIsFeedPage(__unused UIViewController *page) { return NO; }
+static void ApolloDuoPostsRejoinThread(__unused ApolloDuoSplitState *state) {}
 static ApolloDuoSplitState *ApolloDuoSplitStateForNavigation(UINavigationController *nav,
                                                           __unused BOOL create) { return nav.duoState; }
 static void ApolloDuoSplitClose(__unused ApolloDuoSplitState *state, BOOL preserve) {
