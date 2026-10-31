@@ -57,6 +57,7 @@
 @interface ApolloDuoSplitHost : NSObject
 @property(nonatomic) BOOL postsSplitEnabled;
 @property(nonatomic) BOOL postsOverlayVisible;
+@property(nonatomic) BOOL postsThreadSeparated;
 @property(nonatomic) BOOL listVisible;
 @property(nonatomic, strong) UIView *view;
 - (void)setListVisible:(BOOL)visible animated:(BOOL)animated;
