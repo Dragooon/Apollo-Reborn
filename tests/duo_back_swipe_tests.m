@@ -146,7 +146,8 @@ int main(void) {
         nav.view.safeAreaLayoutGuide.layoutFrame = CGRectMake(47, 80, 1053, 720);
         Check(ApolloDuoBackSwipeAcceptsPoint(nav, CGPointMake(4, 300)), @"landscape hardware insets do not move the full-screen Back edge");
         nav.pane = CGRectMake(640, 80, 500, 720);
-        Check(ApolloDuoBackSwipeAcceptsPoint(nav, CGPointMake(646, 300)), @"right pane starts at its own content edge");
+        Check(!ApolloDuoBackSwipeAcceptsPoint(nav, CGPointMake(646, 300)), @"the separator keeps the pane's first points");
+        Check(ApolloDuoBackSwipeAcceptsPoint(nav, CGPointMake(656, 300)), @"right pane starts at its own content edge");
         Check(!ApolloDuoBackSwipeAcceptsPoint(nav, CGPointMake(10, 300)), @"right pane cannot take a gesture started in the left pane");
         Check(!ApolloDuoBackSwipeAcceptsPoint(nav, CGPointMake(700, 300)), @"right pane row actions remain available away from the edge");
         nav.pane = CGRectMake(0, 80, 640, 720);
