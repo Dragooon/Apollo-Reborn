@@ -153,6 +153,14 @@ static BOOL ApolloDuoSplitRevealPostsList(UINavigationController *nav) {
 static BOOL overlayAccepts;
 static NSUInteger overlayReveals;
 static BOOL ApolloDuoSplitCanRevealPostsOverlay(__unused UINavigationController *nav) { return overlayAccepts; }
+static BOOL overlayCloses;
+static NSUInteger overlayClosed;
+static BOOL ApolloDuoSplitCanClosePostsOverlay(__unused UINavigationController *nav) { return overlayCloses; }
+static BOOL ApolloDuoSplitClosePostsOverlay(__unused UINavigationController *nav) {
+    if (!overlayCloses) return NO;
+    overlayClosed++;
+    return YES;
+}
 static BOOL ApolloDuoSplitRevealPostsOverlay(__unused UINavigationController *nav) {
     if (!overlayAccepts) return NO;
     overlayReveals++;
@@ -729,6 +737,13 @@ int main(void) {
             [panelOwner panelPanned:panelOwner.panelPan];
             Check(panelLastPhase == 7, @"panel: every phase reaches the panel");
             panelCanDrag = NO;
+
+            overlayCloses = YES;
+            Check([routeOwner gestureRecognizerShouldBegin:routeOwner.forwardSwipe], @"overlay: a left swipe can close Posts");
+            routeOwner.forwardSwipe.state = UIGestureRecognizerStateRecognized;
+            [routeOwner swiped:routeOwner.forwardSwipe];
+            Check(overlayClosed == 1, @"overlay: the left swipe closes Posts");
+            overlayCloses = NO;
         }
         printf("OK: %lu checks\n", (unsigned long)checks);
     }
