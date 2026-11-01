@@ -45,13 +45,13 @@ typedef NS_ENUM(NSInteger, ApolloDuoPaneRoute) {
     ApolloDuoPaneRouteSubredditPanel, // Feed root: follows the finger, when it can.
     ApolloDuoPaneRoutePostsOverlay,   // Portrait thread: Posts over it.
     ApolloDuoPaneRouteApolloBack,     // A page to pop: Apollo's own pan follows the finger.
-    ApolloDuoPaneRoutePaneBack,       // One animated Back, such as closing the thread beside Posts.
+    ApolloDuoPaneRoutePaneBack,       // One animated Back on a stack Apollo's pan can't drive.
 };
 
 static ApolloDuoPaneRoute ApolloDuoPaneRouteFor(UINavigationController *navigation) {
     if (!ApolloDuoBackSwipeCanNavigate(navigation)) return ApolloDuoPaneRouteNone;
     if (ApolloDuoSplitCanReturnFromVisitedProfile(navigation)) return ApolloDuoPaneRouteVisitedProfile;
-    if (navigation.viewControllers.count == 1) return ApolloDuoPaneRouteSubredditPanel;
+    if (navigation.viewControllers.count == 1 || ApolloDuoSplitThreadSwipeOpensPanel(navigation)) return ApolloDuoPaneRouteSubredditPanel;
     if (ApolloDuoSplitCanRevealPostsOverlay(navigation)) return ApolloDuoPaneRoutePostsOverlay;
     return ApolloDuoNativeBackPanOwns(navigation) ? ApolloDuoPaneRouteApolloBack : ApolloDuoPaneRoutePaneBack;
 }
