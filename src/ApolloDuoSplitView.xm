@@ -2329,7 +2329,14 @@ static void ApolloDuoPostsSetOverlay(ApolloDuoSplitState *state, BOOL visible) {
     // Once separated, Posts already has its column width: nothing rewraps.
     ApolloDuoFeedAnchor *anchor = visible && !host.postsThreadSeparated ? ApolloDuoCaptureFeedAnchorAnywhere(table) : nil;
     ApolloLog(@"[DuoSplit] posts overlay visible=%d animated=%d anchored=%d", visible, animate, anchor != nil);
-    ApolloDuoPostsChangeColumns(state, animate, visible, ^{
+    // Settle the columns with UIKit animation off, so a page's first layout and
+    // Posts rewrapping can't animate, then slide only the column. Going away it
+    // is already hidden, so a picture of it leaves instead.
+    UIView *posts = state.feed.view;
+    CGRect postsFrame = [surface convertRect:posts.bounds fromView:posts];
+    UIView *leaving = !visible && animate
+        ? [surface resizableSnapshotViewFromRect:postsFrame afterScreenUpdates:NO withCapInsets:UIEdgeInsetsZero] : nil;
+    ApolloDuoPostsChangeColumns(state, NO, visible, ^{
         host.postsOverlayVisible = visible;
         if (visible) host.postsThreadSeparated = YES;
     }, ^{
@@ -2337,6 +2344,18 @@ static void ApolloDuoPostsSetOverlay(ApolloDuoSplitState *state, BOOL visible) {
         ApolloDuoRestoreFeedAnchor(table, anchor);
         [table layoutIfNeeded];
     });
+    if (leaving) {
+        leaving.frame = postsFrame;
+        leaving.userInteractionEnabled = NO;
+        [surface insertSubview:leaving belowSubview:host.listDismiss];
+        ApolloDuoSlideDrawer(leaving, 0, -CGRectGetWidth(postsFrame), 0, YES, ^{ [leaving removeFromSuperview]; });
+    } else if (visible && animate) {
+        // UIKit wraps the column; move the widest wrapper that's still only the column.
+        UIView *column = posts;
+        while (column.superview && column.superview != surface
+               && CGRectGetWidth(column.superview.bounds) <= CGRectGetWidth(posts.bounds) + 1.0) column = column.superview;
+        ApolloDuoSlideDrawer(column, -CGRectGetWidth(posts.bounds), 0, 0, YES, nil);
+    }
 }
 
 // Put a separated thread back on the feed stack at the same full-width geometry,
@@ -2348,6 +2367,32 @@ static void ApolloDuoPostsRejoinThread(ApolloDuoSplitState *state) {
         [state.host.view layoutIfNeeded];
     }];
     ApolloLog(@"[DuoSplit] thread rejoined the feed stack");
+}
+
+// Change what's on screen in place: settle the new layout with UIKit animation
+// off under a picture of the old one, then fade the picture away. Nothing moves,
+// so no row is stretched and nothing crosses the screen.
+static void ApolloDuoPostsCrossfade(ApolloDuoSplitHost *host, CGRect rect, void (^change)(void)) {
+    UIView *surface = host.view;
+    UIView *picture = !CGRectIsNull(rect) && !CGRectIsEmpty(rect)
+        ? [surface resizableSnapshotViewFromRect:rect afterScreenUpdates:NO withCapInsets:UIEdgeInsetsZero] : nil;
+    [UIView performWithoutAnimation:change];
+    if (!picture) {
+        ApolloDuoSplitScheduleUpdate();
+        return;
+    }
+    picture.frame = rect;
+    picture.userInteractionEnabled = NO;
+    [surface insertSubview:picture belowSubview:host.listDismiss];
+    host.postsTransitionSnapshot = picture;
+    __weak ApolloDuoSplitHost *weakHost = host;
+    [UIView animateWithDuration:0.2 delay:0 options:UIViewAnimationOptionCurveEaseOut
+                     animations:^{ picture.alpha = 0; }
+                     completion:^(__unused BOOL finished) {
+        [picture removeFromSuperview];
+        if (weakHost.postsTransitionSnapshot == picture) weakHost.postsTransitionSnapshot = nil;
+        ApolloDuoSplitScheduleUpdate();
+    }];
 }
 
 static void ApolloDuoPostsSetDetailPages(ApolloDuoSplitState *state, NSArray<UIViewController *> *pages, BOOL animated) {
@@ -2366,13 +2411,19 @@ static void ApolloDuoPostsSetDetailPages(ApolloDuoSplitState *state, NSArray<UIV
     state.host.postsTransitionSnapshot = nil;
     [state.secondary.view.layer removeAnimationForKey:@"ApolloDuoSlide"];
     if (entering && state.host.postsShowingDetail) {
+        // As in Mail, picking in the list changes the thread in place. A push
+        // would sweep the whole pane, which runs underneath Posts.
         [surface layoutIfNeeded];
-        [state.secondary setViewControllers:stack animated:animate];
+        ApolloDuoPostsCrossfade(state.host, animate ? ApolloDuoPostsDetailPane(state) : CGRectNull, ^{
+            [state.secondary setViewControllers:stack animated:NO];
+            [surface layoutIfNeeded];
+            [state.secondary.view layoutIfNeeded];
+        });
         return;
     }
 
     [surface layoutIfNeeded];
-    NSArray<ApolloDuoPostsGeometry *> *feedGeometry = animate
+    NSArray<ApolloDuoPostsGeometry *> *feedGeometry = animate && !entering
         ? ApolloDuoPostsCaptureGeometry(state.feed.view, surface) : nil;
     CGRect pane = !entering ? ApolloDuoPostsDetailPane(state) : CGRectNull;
     UIView *snapshot = !entering && animate && !CGRectIsNull(pane) && !CGRectIsEmpty(pane)
@@ -2415,6 +2466,12 @@ static void ApolloDuoPostsSetDetailPages(ApolloDuoSplitState *state, NSArray<UIV
         [UIView performWithoutAnimation:updateColumns];
         return;
     }
+    // The first thread beside the feed makes the columns: the feed rewraps to
+    // its column under the same fade as any later thread.
+    if (entering) {
+        ApolloDuoPostsCrossfade(state.host, surface.bounds, updateColumns);
+        return;
+    }
     // Finish containment with UIKit animation disabled. Running this inside
     // a UIView animation also animates UIKit's column wrappers, which moves
     // the whole feed a second time on top of its explicit geometry replay.
@@ -2425,14 +2482,7 @@ static void ApolloDuoPostsSetDetailPages(ApolloDuoSplitState *state, NSArray<UIV
     [CATransaction begin];
     [CATransaction setCompletionBlock:^{ ApolloDuoSplitScheduleUpdate(); }];
     ApolloDuoPostsAnimateGeometry(feedGeometry, state.feed.view, surface, 0.32);
-    if (entering) {
-        // Use the live navigation surface so async comment/media updates
-        // remain visible throughout the first push.
-        CGRect incomingPane = ApolloDuoPostsDetailPane(state);
-        CGFloat travel = CGRectGetMaxX(surface.bounds) - CGRectGetMinX(incomingPane);
-        if (!CGRectIsNull(incomingPane) && travel > 0)
-            ApolloDuoSlideView(state.secondary.view, travel, 0, 0.32, nil);
-    } else if (snapshot) {
+    if (snapshot) {
         CGFloat travel = CGRectGetMaxX(surface.bounds) - CGRectGetMinX(pane);
         ApolloDuoSlideView(snapshot, 0, travel, 0.32, ^{
             [snapshot removeFromSuperview];
