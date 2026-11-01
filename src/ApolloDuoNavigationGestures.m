@@ -89,7 +89,8 @@ static BOOL ApolloDuoBackSwipeAcceptsPoint(UINavigationController *navigation, C
     return ApolloDuoBackSwipeInEdgeStrip(pane, point) || ApolloDuoBackSwipeStartsAnywhere();
 }
 
-// The forward half. After the thread beside the Posts feed is closed, a left
+// The forward half. Over a portrait thread, a left swipe on Posts closes Posts.
+// After the thread beside the Posts feed is closed, a left
 // swipe on the full-width feed brings it back as it was left. It mirrors Back:
 // the feed's trailing 28pt strip, or anywhere with Gestures > Disable Right
 // Swipes on, which turns off the row actions a left swipe would trigger.
@@ -98,7 +99,8 @@ static BOOL ApolloDuoForwardSwipeStartsAnywhere(void) {
 }
 
 static BOOL ApolloDuoForwardSwipeCanNavigate(UINavigationController *navigation) {
-    return ApolloDuoSplitCanRestoreClosedThread(navigation) && ApolloDuoSwipeEnvironmentAllows(navigation);
+    return (ApolloDuoSplitCanClosePostsOverlay(navigation) || ApolloDuoSplitCanRestoreClosedThread(navigation))
+        && ApolloDuoSwipeEnvironmentAllows(navigation);
 }
 
 static BOOL ApolloDuoForwardSwipeInEdgeStrip(CGRect pane, CGPoint point) {
@@ -273,6 +275,10 @@ static const NSTimeInterval kApolloDuoHighlightGuardDelay = 0.12;
     UINavigationController *navigation = self.navigation;
     if (gesture == self.forwardSwipe) {
         if (gesture.state != UIGestureRecognizerStateRecognized || !ApolloDuoForwardSwipeCanNavigate(navigation)) return;
+        if (ApolloDuoSplitClosePostsOverlay(navigation)) {
+            ApolloLog(@"[DuoSwipe] Posts over the thread: close it");
+            return;
+        }
         ApolloLog(@"[DuoSwipe] feed: bring back the closed thread");
         ApolloDuoSplitRestoreClosedThread(navigation);
         return;
