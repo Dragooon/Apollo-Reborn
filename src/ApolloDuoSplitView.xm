@@ -31,22 +31,40 @@
 static UITableView *ApolloDuoSplitFindTable(UIView *view);
 static void ApolloDuoPostsStopGeometry(UIView *feed);
 @class ApolloDuoSplitHost;
+static void ApolloDuoPostsRememberColumnWidth(ApolloDuoSplitHost *host);
 static void ApolloDuoToggleFeedLayout(ApolloDuoSplitHost *host);
 static void ApolloDuoToggleVisibleFeedLayout(UIViewController *controller, BOOL enabled);
 static NSUInteger ApolloDuoFeedStackKeptCount(UINavigationController *feed);
 
-// The Posts column on an open Duo, in both orientations: about an iPhone's
-// width, which is what Apollo's rows are built for, so the thread beside it
-// gets the rest. Mail's list measures ~418pt on the same display. Folded like a
-// book the column ends at the fold instead, as system split views do.
-static const CGFloat kApolloDuoPostsColumnWidth = 390.0;
+// The Posts column on an open Duo, in both orientations: by default about an
+// iPhone's width, which is what Apollo's rows are built for, so the thread beside
+// it gets the rest. Mail's list measures ~418pt on the same display. Flat in
+// landscape UIKit lets people drag the separator to change it (iOS 26's interactive
+// column resizing, within the minimum and maximum set here), and the width they
+// choose is remembered. Folded like a book the column ends at the fold instead.
+static const CGFloat kApolloDuoPostsColumnDefaultWidth = 390.0;
+static const CGFloat kApolloDuoPostsColumnMinimumWidth = 320.0;
+static NSString *const kApolloDuoPostsColumnWidthKey = @"ApolloDuoPostsColumnWidth";
+static CGFloat sApolloDuoPostsChosenColumnWidth;
 // The subreddit drawer sits over the Posts column and leaves part of it showing,
 // like Mail's Mailboxes over its list. 320pt is the narrowest iPhone Apollo runs on.
 static const CGFloat kApolloDuoSubredditDrawerWidth = 320.0;
 
+// Landscape keeps the thread tiled beside Posts with its action row clear of the
+// rail: 84pt rail + 260pt of actions. Portrait's overlay leaves the thread its width.
+static CGFloat ApolloDuoPostsColumnMaximumWidth(CGFloat canvasWidth) {
+    CGFloat reserved = canvasWidth >= 800.0 ? 344.0 : 240.0;
+    return MAX(240.0, canvasWidth - reserved);
+}
+
 static CGFloat ApolloDuoPostsColumnWidth(CGFloat canvasWidth, BOOL endsAtFold) {
     if (endsAtFold) return canvasWidth * 0.5;
-    return MIN(kApolloDuoPostsColumnWidth, MAX(240.0, canvasWidth - 240.0));
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        sApolloDuoPostsChosenColumnWidth = [NSUserDefaults.standardUserDefaults doubleForKey:kApolloDuoPostsColumnWidthKey];
+    });
+    CGFloat chosen = sApolloDuoPostsChosenColumnWidth > 0.0 ? sApolloDuoPostsChosenColumnWidth : kApolloDuoPostsColumnDefaultWidth;
+    return MIN(chosen, ApolloDuoPostsColumnMaximumWidth(canvasWidth));
 }
 
 @protocol ApolloDuoLayoutControl <NSObject>
@@ -271,6 +289,9 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
 // Back rejoins Apollo's native stack; Posts rewraps once, then, not on every show.
 @property(nonatomic) BOOL postsThreadSeparated;
 @property(nonatomic, strong) UIControl *postsOverlayDismiss;
+@property(nonatomic, strong) UIView *postsColumnDivider;
+@property(nonatomic, strong) UIView *listEdge;
+@property(nonatomic) BOOL postsColumnWidthSaveScheduled;
 @property(nonatomic, copy) void (^setPostsOverlay)(BOOL visible);
 @property(nonatomic) BOOL splitButtonShowsSidebar;
 @property(nonatomic, readonly) BOOL canShowPostsOverlay;
@@ -353,19 +374,11 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
         [self.view addSubview:self.listContainer];
         self.listGlass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [self.listContainer addSubview:self.listGlass];
-        // The drawer's leading corners sit 12pt inside the display's rounded
-        // corners. Follow them concentrically, as system sheets do, instead of
-        // a fixed radius the display clips. The container resolves against the
-        // window; the material, sharing its bounds, takes the same radius.
-        if (@available(iOS 26.0, *)) {
-            UICornerConfiguration *corners = [UICornerConfiguration configurationWithUniformRadius:
-                [UICornerRadius containerConcentricRadiusWithMinimum:28]];
-            self.listContainer.cornerConfiguration = corners;
-            self.listGlass.cornerConfiguration = corners;
-        } else {
-            self.listGlass.layer.cornerRadius = 28;
-            self.listGlass.layer.cornerCurve = kCACornerCurveContinuous;
-        }
+        // Flush with the display's edge at full height, as Mail's Mailboxes
+        // are over its list on this display; a hairline ends it on the other side.
+        self.listEdge = [UIView new];
+        self.listEdge.backgroundColor = UIColor.separatorColor;
+        [self.listContainer addSubview:self.listEdge];
         // A managed bar joins Duo's global vertical navigation rail even
         // inside this narrow drawer. A standalone native bar keeps Apollo's
         // actual items horizontal and derives its height from UIKit.
@@ -385,7 +398,7 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
         list.translatesAutoresizingMaskIntoConstraints = NO;
         [self.listGlass.contentView addSubview:list];
         [NSLayoutConstraint activateConstraints:@[
-            [self.listNavigationBar.topAnchor constraintEqualToAnchor:self.listGlass.contentView.topAnchor constant:12],
+            [self.listNavigationBar.topAnchor constraintEqualToAnchor:self.listGlass.contentView.topAnchor constant:24],
             // UIKit adds 8pt before the native Add platter but places Edit
             // flush with the bar's trailing edge. Both visible platters need
             // the same 20pt inset from the rounded drawer, including Done.
@@ -512,14 +525,12 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
         // the material; it does not change the app-wide Liquid Glass setting.
         [self restoreListSurfaceColors];
         UIVisualEffect *effect = nil;
-        if (self.listUsesGlass) {
-            if (@available(iOS 26.0, *)) effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
-            else effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
-        }
+        // A sidebar material rather than a floating glass platter.
+        if (self.listUsesGlass) effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
         self.listGlass.effect = effect;
         self.listStyleApplied = YES;
     }
-    NSString *panelTitle = self.listUsesGlass ? @"" : @"Subreddits";
+    NSString *panelTitle = @"Subreddits";
     if (![self.listNavigationBar.topItem.title isEqualToString:panelTitle])
         self.listNavigationBar.topItem.title = panelTitle;
     self.listGlass.backgroundColor = self.listUsesGlass ? UIColor.clearColor
@@ -864,27 +875,29 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
         self.postsOverlayDismiss.frame = CGRectMake(overlayColumn, 0, MAX(0, self.view.bounds.size.width - overlayColumn), self.view.bounds.size.height);
         self.postsOverlayDismiss.hidden = !self.postsOverlayVisible;
         if (self.splitButtonShowsSidebar != portrait) [self updateSplitButton];
-        CGFloat bottom = CGRectGetMaxY(self.view.bounds) - 12;
-        if (portrait) {
-            // The floating bottom tab bar overlays this full-height host.
-            // Reserve its native layout frame, not the animated glass platter,
-            // so the drawer stays clear without resizing as the bar minimizes.
-            bottom -= self.view.safeAreaInsets.bottom;
-            UITabBar *tabBar = self.tabBarController.tabBar;
-            if (tabBar.window && tabBar.window == self.view.window) {
-                CGRect barFrame = [tabBar convertRect:tabBar.bounds toView:self.view];
-                if (!CGRectIsEmpty(barFrame) && CGRectGetWidth(barFrame) > CGRectGetHeight(barFrame)
-                    && CGRectGetMidY(barFrame) > CGRectGetMidY(self.view.bounds)) {
-                    bottom = MIN(bottom, CGRectGetMinY(barFrame) - 12);
-                }
-            }
+        // The line between Posts and the thread. It lives on the Posts column
+        // so it moves with UIKit's separator drag without any layout from here.
+        UIView *postsColumn = self.postsNavigation.viewIfLoaded;
+        if (postsColumn && !self.postsColumnDivider) {
+            self.postsColumnDivider = [UIView new];
+            self.postsColumnDivider.backgroundColor = UIColor.separatorColor;
+            self.postsColumnDivider.userInteractionEnabled = NO;
+            self.postsColumnDivider.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleHeight;
+            [postsColumn addSubview:self.postsColumnDivider];
         }
-        CGFloat height = MAX(0, bottom - 12);
+        CGFloat dividerWidth = 1.0 / MAX(1.0, self.traitCollection.displayScale);
+        self.postsColumnDivider.frame = CGRectMake(CGRectGetWidth(postsColumn.bounds) - dividerWidth, 0, dividerWidth, CGRectGetHeight(postsColumn.bounds));
+        self.postsColumnDivider.hidden = !self.postsColumnsPaired;
+        ApolloDuoPostsRememberColumnWidth(self);
+        // Full height: the list's safe area keeps its rows clear of a bottom tab bar.
+        CGFloat height = self.view.bounds.size.height;
         self.listDismiss.frame = self.view.bounds;
         // Bounds/center stay independent of the presentation transform.
         self.listContainer.bounds = CGRectMake(0, 0, width, height);
-        self.listContainer.center = CGPointMake(12 + width / 2, 12 + height / 2);
+        self.listContainer.center = CGPointMake(width / 2, height / 2);
         self.listGlass.frame = self.listContainer.bounds;
+        CGFloat listEdgeWidth = 1.0 / MAX(1.0, self.traitCollection.displayScale);
+        self.listEdge.frame = CGRectMake(width - listEdgeWidth, 0, listEdgeWidth, height);
         // The drawer covers/intercepts its underlying controls. Keep the
         // navigation items installed so opening it never reflows the bar.
         self.listButton.hidden = NO;
@@ -1390,7 +1403,11 @@ static void ApolloDuoSplitApplySidebarWidth(ApolloDuoSplitState *state, BOOL hal
     CGFloat postsColumn = ApolloDuoPostsColumnWidth(canvas.width, postsLandscape && halfWidth);
     // UIKit may keep an earlier sidebar width across column replacement.
     // Bound both ends for Posts so its divider lands exactly where it's meant to.
-    CGFloat maximum = state.feed ? postsColumn : (halfWidth ? CGFLOAT_MAX : 420.0);
+    // Flat in landscape the bounds are apart, which is what lets UIKit's separator
+    // drag move it; every other pose has one right answer, so both ends meet there.
+    BOOL postsResizable = postsLandscape && !halfWidth && canvas.width >= 800.0;
+    CGFloat maximum = state.feed ? (postsResizable ? ApolloDuoPostsColumnMaximumWidth(canvas.width) : postsColumn)
+        : (halfWidth ? CGFLOAT_MAX : 420.0);
     if (state.feed) {
         // Portrait layers Posts over the thread (showColumn: picks the mode that
         // fits this behavior); landscape tiles them side by side.
@@ -1402,7 +1419,7 @@ static void ApolloDuoSplitApplySidebarWidth(ApolloDuoSplitState *state, BOOL hal
     // disclosure: a third of the flat inner display (~317pt) cut "Off" to "O".
     // Give that sidebar enough room for the value at the default text size.
     CGFloat sidebarMinimum = [state.kind isEqualToString:@"settings"] ? 340.0 : 240.0;
-    CGFloat minimum = state.feed ? postsColumn : sidebarMinimum;
+    CGFloat minimum = state.feed ? (postsResizable ? kApolloDuoPostsColumnMinimumWidth : postsColumn) : sidebarMinimum;
     if (split.maximumPrimaryColumnWidth != maximum) split.maximumPrimaryColumnWidth = maximum;
     if (split.minimumPrimaryColumnWidth != minimum) split.minimumPrimaryColumnWidth = minimum;
     CGFloat fraction = state.feed ? (canvas.width > 0.0 ? postsColumn / canvas.width : 0.5) : (halfWidth ? 0.5 : 1.0 / 3.0);
@@ -1422,6 +1439,30 @@ static void ApolloDuoSplitApplySidebarWidth(ApolloDuoSplitState *state, BOOL hal
         split.preferredDisplayMode = UISplitViewControllerDisplayModeOneBesideSecondary;
         [split showColumn:UISplitViewControllerColumnPrimary];
     }
+}
+
+// UIKit reports no end to a separator drag, so read the settled width from the
+// host's layout, and keep it only while nothing but a person can have moved it.
+static void ApolloDuoPostsRememberColumnWidth(ApolloDuoSplitHost *host) {
+    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(host.postsNavigation, NO);
+    UISplitViewController *split = state.split;
+    CGSize canvas = host.view.bounds.size;
+    if (!split || !host.postsColumnsPaired || state.changing || state.postsTogglingSplit || state.halfWidthSidebar
+        || sDuoSplitResizingTabs || split.transitionCoordinator || state.feed.transitionCoordinator
+        || state.secondary.transitionCoordinator || canvas.width <= canvas.height || canvas.width < 800.0
+        || split.displayMode != UISplitViewControllerDisplayModeOneBesideSecondary) return;
+    CGFloat width = split.primaryColumnWidth;
+    if (width < kApolloDuoPostsColumnMinimumWidth || width > ApolloDuoPostsColumnMaximumWidth(canvas.width)
+        || fabs(width - ApolloDuoPostsColumnWidth(canvas.width, NO)) < 0.5) return;
+    sApolloDuoPostsChosenColumnWidth = width;
+    if (host.postsColumnWidthSaveScheduled) return;
+    host.postsColumnWidthSaveScheduled = YES;
+    __weak ApolloDuoSplitHost *weakHost = host;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        weakHost.postsColumnWidthSaveScheduled = NO;
+        [NSUserDefaults.standardUserDefaults setDouble:sApolloDuoPostsChosenColumnWidth forKey:kApolloDuoPostsColumnWidthKey];
+        ApolloLog(@"[DuoSplit] Posts column width %.1f", sApolloDuoPostsChosenColumnWidth);
+    });
 }
 
 BOOL ApolloDuoRequiresSubredditEnhancements(void) {
@@ -2966,6 +3007,8 @@ static void ApolloDuoSplitClose(ApolloDuoSplitState *state, BOOL preserveDetail)
         state.host.postsColumnsPaired = NO;
         state.host.postsOverlayVisible = NO;
         state.host.postsThreadSeparated = NO;
+        [state.host.postsColumnDivider removeFromSuperview];
+        state.host.postsColumnDivider = nil;
         if (state.feedActions) {
             (state.feedActionsItem ?: state.feed.viewControllers.firstObject.navigationItem).rightBarButtonItems = state.feedActions;
         }

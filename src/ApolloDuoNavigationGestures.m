@@ -41,6 +41,8 @@ static BOOL ApolloDuoBackSwipeAcceptsPoint(UINavigationController *navigation, C
                           CGRectGetWidth(view.bounds), CGRectGetHeight(safe));
     }
     if (CGRectIsEmpty(pane) || !CGRectContainsPoint(pane, point)) return NO;
+    // Beside another column the first points belong to UIKit's separator drag.
+    if (CGRectGetMinX(pane) > 0.0 && point.x < CGRectGetMinX(pane) + 12.0) return NO;
     return point.x <= CGRectGetMinX(pane) + 28.0;
 }
 

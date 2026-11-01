@@ -2992,11 +2992,11 @@ static NSInteger ApolloHeaderStylePickerValue(NSInteger index, BOOL blurAvailabl
         [ApolloSettingsRow valueRowWithID:@"sub.panelStyle"
                                    title:@"Subreddit Panel Style"
                                   detail:^NSString * {
-            return sDuoSubredditPanelGlassEnabled ? @"Liquid Glass" : @"Standard";
+            return sDuoSubredditPanelGlassEnabled ? @"Translucent" : @"Standard";
         }
                                 onSelect:^{
             ApolloSettingsPresentPicker(weakSelf, [weakSelf cellForRowID:@"sub.panelStyle"],
-                @"Subreddit Panel Style", @[ @"Standard", @"Liquid Glass" ],
+                @"Subreddit Panel Style", @[ @"Standard", @"Translucent" ],
                 sDuoSubredditPanelGlassEnabled ? 1 : 0, ^(NSInteger picked) {
                     BOOL glassEnabled = picked == 1;
                     if (sDuoSubredditPanelGlassEnabled == glassEnabled) return;
