@@ -267,9 +267,9 @@ static const NSTimeInterval kApolloDuoHighlightGuardDelay = 0.12;
     // Nothing to do: recognizing is the point (cancelsTouchesInView clears the row highlight).
 }
 - (void)panelPanned:(UIPanGestureRecognizer *)pan {
-    UIView *view = self.navigation.view;
+    // In window coordinates: beside Posts this view moves with the finger.
     ApolloLog(@"[DuoSwipe] feed root: panel drag state=%ld", (long)pan.state);
-    ApolloDuoSplitDragSubredditPanel(self.navigation, pan.state, [pan translationInView:view].x, [pan velocityInView:view].x);
+    ApolloDuoSplitDragSubredditPanel(self.navigation, pan.state, [pan translationInView:nil].x, [pan velocityInView:nil].x);
 }
 - (void)swiped:(UISwipeGestureRecognizer *)gesture {
     UINavigationController *navigation = self.navigation;
