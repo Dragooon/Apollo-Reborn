@@ -46,9 +46,12 @@ static const CGFloat kApolloDuoPostsColumnDefaultWidth = 390.0;
 static const CGFloat kApolloDuoPostsColumnMinimumWidth = 320.0;
 static NSString *const kApolloDuoPostsColumnWidthKey = @"ApolloDuoPostsColumnWidth";
 static CGFloat sApolloDuoPostsChosenColumnWidth;
-// The subreddit drawer sits over the Posts column and leaves part of it showing,
-// like Mail's Mailboxes over its list. 320pt is the narrowest iPhone Apollo runs on.
-static const CGFloat kApolloDuoSubredditDrawerWidth = 320.0;
+// The subreddit panel floats by default. Its Sidebar style sits flush over the Posts
+// column and leaves part of it showing, like Mail's Mailboxes over its list; 320pt
+// is the narrowest iPhone Apollo runs on.
+static CGFloat ApolloDuoSubredditDrawerWidth(CGFloat canvasWidth) {
+    return MIN(sDuoSubredditPanelSidebarEnabled ? 320.0 : 360.0, canvasWidth - 96);
+}
 
 // Landscape keeps the thread tiled beside Posts with its action row clear of the
 // rail: 84pt rail + 260pt of actions. Portrait's overlay leaves the thread its width.
@@ -272,6 +275,8 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
 @property(nonatomic, strong) UIView *listContainer;
 @property(nonatomic, strong) UIVisualEffectView *listGlass;
 @property(nonatomic) BOOL listUsesGlass;
+@property(nonatomic) BOOL listUsesSidebar;
+@property(nonatomic, strong) NSLayoutConstraint *listNavigationBarTop;
 @property(nonatomic) BOOL listStyleApplied;
 - (void)updateListAppearance;
 - (void)restoreListSurfaceColors;
@@ -374,8 +379,7 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
         [self.view addSubview:self.listContainer];
         self.listGlass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [self.listContainer addSubview:self.listGlass];
-        // Flush with the display's edge at full height, as Mail's Mailboxes
-        // are over its list on this display; a hairline ends it on the other side.
+        // The Sidebar style's line, ending it where it meets the content.
         self.listEdge = [UIView new];
         [self.listContainer addSubview:self.listEdge];
         // A managed bar joins Duo's global vertical navigation rail even
@@ -396,8 +400,9 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
         UIView *list = self.subredditList.view;
         list.translatesAutoresizingMaskIntoConstraints = NO;
         [self.listGlass.contentView addSubview:list];
+        self.listNavigationBarTop = [self.listNavigationBar.topAnchor constraintEqualToAnchor:self.listGlass.contentView.topAnchor constant:12];
         [NSLayoutConstraint activateConstraints:@[
-            [self.listNavigationBar.topAnchor constraintEqualToAnchor:self.listGlass.contentView.topAnchor constant:24],
+            self.listNavigationBarTop,
             // UIKit adds 8pt before the native Add platter but places Edit
             // flush with the bar's trailing edge. Both visible platters need
             // the same 20pt inset from the rounded drawer, including Done.
@@ -515,21 +520,48 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
 }
 - (void)updateListAppearance {
     if (!self.subredditList || !self.listGlass) return;
-    BOOL changed = !self.listStyleApplied || self.listUsesGlass != sDuoSubredditPanelGlassEnabled;
+    // Sidebar's rows sit on a material too, so it uses the glass style's surfaces.
+    BOOL translucent = sDuoSubredditPanelGlassEnabled || sDuoSubredditPanelSidebarEnabled;
+    BOOL changed = !self.listStyleApplied || self.listUsesGlass != translucent
+        || self.listUsesSidebar != sDuoSubredditPanelSidebarEnabled;
     BOOL refreshRows = self.listStyleApplied && changed;
-    self.listUsesGlass = sDuoSubredditPanelGlassEnabled;
+    self.listUsesGlass = translucent;
+    self.listUsesSidebar = sDuoSubredditPanelSidebarEnabled;
     if (changed) {
         // Keep the same controller, panel geometry, and native Add/Edit items.
         // Standard restores Apollo's own surfaces instead of clearing them for
         // the material; it does not change the app-wide Liquid Glass setting.
         [self restoreListSurfaceColors];
         UIVisualEffect *effect = nil;
-        // A sidebar material rather than a floating glass platter.
-        if (self.listUsesGlass) effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+        if (self.listUsesSidebar) {
+            // A sidebar material rather than a floating glass platter.
+            effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+        } else if (self.listUsesGlass) {
+            if (@available(iOS 26.0, *)) effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+            else effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+        }
+        // The floating panel's corners sit 12pt inside the display's rounded
+        // corners. Follow them concentrically, as system sheets do, instead of
+        // a fixed radius the display clips. The container resolves against the
+        // window; the material, sharing its bounds, takes the same radius.
+        // Sidebar is flush with the display's edge, as Mail's Mailboxes are.
+        if (@available(iOS 26.0, *)) {
+            UICornerConfiguration *corners = [UICornerConfiguration configurationWithUniformRadius:
+                self.listUsesSidebar ? [UICornerRadius fixedRadius:0]
+                                     : [UICornerRadius containerConcentricRadiusWithMinimum:28]];
+            self.listContainer.cornerConfiguration = corners;
+            self.listGlass.cornerConfiguration = corners;
+        } else {
+            self.listGlass.layer.cornerRadius = self.listUsesSidebar ? 0 : 28;
+            self.listGlass.layer.cornerCurve = kCACornerCurveContinuous;
+        }
+        self.listNavigationBarTop.constant = self.listUsesSidebar ? 24 : 12;
+        self.listEdge.hidden = !self.listUsesSidebar;
+        [self.view setNeedsLayout];
         self.listGlass.effect = effect;
         self.listStyleApplied = YES;
     }
-    NSString *panelTitle = @"Subreddits";
+    NSString *panelTitle = self.listUsesGlass && !self.listUsesSidebar ? @"" : @"Subreddits";
     if (![self.listNavigationBar.topItem.title isEqualToString:panelTitle])
         self.listNavigationBar.topItem.title = panelTitle;
     self.listGlass.backgroundColor = self.listUsesGlass ? UIColor.clearColor
@@ -868,7 +900,7 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
     [super viewDidLayoutSubviews];
     [self scheduleSplitSafeAreaSync];
     if (self.subredditList) {
-        CGFloat width = MIN(kApolloDuoSubredditDrawerWidth, self.view.bounds.size.width - 96);
+        CGFloat width = ApolloDuoSubredditDrawerWidth(self.view.bounds.size.width);
         BOOL portrait = self.view.bounds.size.width <= self.view.bounds.size.height;
         CGFloat overlayColumn = self.split.primaryColumnWidth;
         self.postsOverlayDismiss.frame = CGRectMake(overlayColumn, 0, MAX(0, self.view.bounds.size.width - overlayColumn), self.view.bounds.size.height);
@@ -889,12 +921,28 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
         self.postsColumnDivider.frame = CGRectMake(CGRectGetWidth(postsColumn.bounds) - 1.0, 0, 1.0, CGRectGetHeight(postsColumn.bounds));
         self.postsColumnDivider.hidden = !self.postsColumnsPaired;
         ApolloDuoPostsRememberColumnWidth(self);
-        // Full height: the list's safe area keeps its rows clear of a bottom tab bar.
-        CGFloat height = self.view.bounds.size.height;
+        CGFloat bottom = CGRectGetMaxY(self.view.bounds) - 12;
+        if (portrait) {
+            // The floating bottom tab bar overlays this full-height host.
+            // Reserve its native layout frame, not the animated glass platter,
+            // so the drawer stays clear without resizing as the bar minimizes.
+            bottom -= self.view.safeAreaInsets.bottom;
+            UITabBar *tabBar = self.tabBarController.tabBar;
+            if (tabBar.window && tabBar.window == self.view.window) {
+                CGRect barFrame = [tabBar convertRect:tabBar.bounds toView:self.view];
+                if (!CGRectIsEmpty(barFrame) && CGRectGetWidth(barFrame) > CGRectGetHeight(barFrame)
+                    && CGRectGetMidY(barFrame) > CGRectGetMidY(self.view.bounds)) {
+                    bottom = MIN(bottom, CGRectGetMinY(barFrame) - 12);
+                }
+            }
+        }
+        // Sidebar runs full height: the list's safe area keeps its rows clear of a bottom tab bar.
+        CGFloat height = self.listUsesSidebar ? self.view.bounds.size.height : MAX(0, bottom - 12);
         self.listDismiss.frame = self.view.bounds;
         // Bounds/center stay independent of the presentation transform.
         self.listContainer.bounds = CGRectMake(0, 0, width, height);
-        self.listContainer.center = CGPointMake(width / 2, height / 2);
+        CGFloat listInset = self.listUsesSidebar ? 0 : 12;
+        self.listContainer.center = CGPointMake(listInset + width / 2, listInset + height / 2);
         self.listGlass.frame = self.listContainer.bounds;
         UIColor *listEdgeColor = ApolloThemeSeparatorColor() ?: UIColor.opaqueSeparatorColor;
         if (![self.listEdge.backgroundColor isEqual:listEdgeColor]) self.listEdge.backgroundColor = listEdgeColor;
@@ -1101,7 +1149,7 @@ CGFloat ApolloDuoSplitTransitionContentWidth(UIView *view, CGFloat trailingInset
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(owner.navigationController, NO);
     CGFloat width = sDuoSplitTargetSize.width;
     if (state.feed && state.split && MIN(sDuoSplitTargetSize.width, sDuoSplitTargetSize.height) >= 600) {
-        if (owner.navigationController == state.primary) return MIN(kApolloDuoSubredditDrawerWidth, width - 96);
+        if (owner.navigationController == state.primary) return ApolloDuoSubredditDrawerWidth(width);
         BOOL landscape = sDuoSplitTargetSize.width > sDuoSplitTargetSize.height;
         BOOL paired = state.host.postsSplitEnabled && landscape && (state.secondary.viewControllers.count > 1 || state.feed.viewControllers.count > 1);
         CGFloat column = ApolloDuoPostsColumnWidth(width, landscape && state.halfWidthSidebar);

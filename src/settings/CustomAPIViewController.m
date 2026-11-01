@@ -2992,17 +2992,23 @@ static NSInteger ApolloHeaderStylePickerValue(NSInteger index, BOOL blurAvailabl
         [ApolloSettingsRow valueRowWithID:@"sub.panelStyle"
                                    title:@"Subreddit Panel Style"
                                   detail:^NSString * {
-            return sDuoSubredditPanelGlassEnabled ? @"Translucent" : @"Standard";
+            if (sDuoSubredditPanelSidebarEnabled) return @"Sidebar";
+            return sDuoSubredditPanelGlassEnabled ? @"Liquid Glass" : @"Standard";
         }
                                 onSelect:^{
             ApolloSettingsPresentPicker(weakSelf, [weakSelf cellForRowID:@"sub.panelStyle"],
-                @"Subreddit Panel Style", @[ @"Standard", @"Translucent" ],
-                sDuoSubredditPanelGlassEnabled ? 1 : 0, ^(NSInteger picked) {
+                @"Subreddit Panel Style", @[ @"Standard", @"Liquid Glass", @"Sidebar" ],
+                sDuoSubredditPanelSidebarEnabled ? 2 : (sDuoSubredditPanelGlassEnabled ? 1 : 0), ^(NSInteger picked) {
                     BOOL glassEnabled = picked == 1;
-                    if (sDuoSubredditPanelGlassEnabled == glassEnabled) return;
+                    BOOL sidebarEnabled = picked == 2;
+                    if (sDuoSubredditPanelGlassEnabled == glassEnabled
+                        && sDuoSubredditPanelSidebarEnabled == sidebarEnabled) return;
                     sDuoSubredditPanelGlassEnabled = glassEnabled;
+                    sDuoSubredditPanelSidebarEnabled = sidebarEnabled;
                     [NSUserDefaults.standardUserDefaults setBool:glassEnabled
                         forKey:UDKeyDuoSubredditPanelGlassEnabled];
+                    [NSUserDefaults.standardUserDefaults setBool:sidebarEnabled
+                        forKey:UDKeyDuoSubredditPanelSidebarEnabled];
                     [weakSelf reloadRowWithID:@"sub.panelStyle"];
                     ApolloDuoSplitScheduleUpdate();
                 });

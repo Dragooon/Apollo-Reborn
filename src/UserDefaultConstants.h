@@ -367,6 +367,7 @@ static NSString *const UDKeyDuoLandscapeFeedLayout = @"DuoLandscapeFeedLayout";
 // Open Duo subreddit panel appearance: NO = Standard
 // (default), YES = Liquid Glass. The panel keeps the same size and navigation.
 static NSString *const UDKeyDuoSubredditPanelGlassEnabled = @"DuoSubredditPanelGlassEnabled";
+static NSString *const UDKeyDuoSubredditPanelSidebarEnabled = @"DuoSubredditPanelSidebarEnabled";
 // iPad only. When ON, replaces each tab's single navigation stack with a
 // multi-column UISplitViewController: sidebar (the tab's own root list) →
 // content → detail. Opt-in; default OFF via registerDefaults. Installation

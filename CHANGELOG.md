@@ -11,7 +11,7 @@ All notable changes to this project will be documented in this file.
   - If the feed can't load, Home shows your subscriptions
 - iPhone Duo: Posts and comments are laid out more like Mail when open
   - In landscape Posts is about an iPhone wide and comments get the rest, with a line between them; drag it to change the width, which is remembered. Folded like a book they still meet at the fold
-  - The subreddit panel runs flush to the edge at full height instead of floating
+  - Add a **Sidebar** choice to **Subreddit Panel Style**: flush to the edge at full height, as Mail's Mailboxes are, instead of floating
   - In portrait, swipe right on a post's comments (or tap the sidebar button) to show Posts over them, and swipe right again for your subreddits. Back stays in the navigation bar
 
 ## [v4.0.1] - 2026-10-30
