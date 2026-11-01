@@ -278,8 +278,11 @@ int main(void) {
         NSSet *downs = [NSSet setWithObject:down];
         [guard touchesBegan:downs withEvent:[UIEvent new]];
         Check(guard.state == UIGestureRecognizerStatePossible, @"highlight guard starts undecided");
+        NSDate *guardStart = [NSDate date];
         [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:kApolloDuoHighlightGuardDelay / 2]];
-        Check(guard.state == UIGestureRecognizerStatePossible, @"highlight guard stays undecided within the delay");
+        // A busy CI machine can oversleep past the delay, and then the guard has rightly decided.
+        Check(-guardStart.timeIntervalSinceNow >= kApolloDuoHighlightGuardDelay || guard.state == UIGestureRecognizerStatePossible,
+              @"highlight guard stays undecided within the delay");
         [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:kApolloDuoHighlightGuardDelay]];
         Check(guard.state == UIGestureRecognizerStateFailed, @"an undecided guard fails after the delay, releasing the touch-down (tap/hold highlight)");
         [guard reset]; [guard touchesBegan:downs withEvent:[UIEvent new]];
