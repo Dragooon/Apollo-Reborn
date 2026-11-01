@@ -12,6 +12,9 @@
 // thread in opened portrait it reveals Posts first, as Mail's two levels do. Calling the
 // native pop entry point keeps the author's feed/thread restoration animation.
 // Keep row swipe actions elsewhere, and honor Apollo's navigation-gesture opt-out.
+//
+// One flow: Apollo's settings choose where a swipe can start (ApolloDuoBackSwipeAcceptsPoint)
+// and ApolloDuoPaneRouteFor alone chooses what it does there.
 static BOOL ApolloDuoSwipeEnvironmentAllows(UINavigationController *navigation) {
     BOOL eligible = ApolloDeviceIsDuo() && navigation.viewIfLoaded.window
         && ![NSUserDefaults.standardUserDefaults boolForKey:@"DisableNavigationGestures"]
@@ -34,6 +37,23 @@ static BOOL ApolloDuoBackSwipeCanNavigate(UINavigationController *navigation) {
         && ApolloDuoSplitAllowsNavigationSwipe(navigation)
         && ApolloDuoSplitDetailNavigation(navigation) == navigation;
     return (pane || ApolloDuoSplitCanReturnFromVisitedProfile(navigation)) && ApolloDuoSwipeEnvironmentAllows(navigation);
+}
+
+typedef NS_ENUM(NSInteger, ApolloDuoPaneRoute) {
+    ApolloDuoPaneRouteNone,
+    ApolloDuoPaneRouteVisitedProfile, // Leaves the profile, from either column.
+    ApolloDuoPaneRouteSubredditPanel, // Feed root: follows the finger, when it can.
+    ApolloDuoPaneRoutePostsOverlay,   // Portrait thread: Posts over it.
+    ApolloDuoPaneRouteApolloBack,     // A page to pop: Apollo's own pan follows the finger.
+    ApolloDuoPaneRoutePaneBack,       // One animated Back, such as closing the thread beside Posts.
+};
+
+static ApolloDuoPaneRoute ApolloDuoPaneRouteFor(UINavigationController *navigation) {
+    if (!ApolloDuoBackSwipeCanNavigate(navigation)) return ApolloDuoPaneRouteNone;
+    if (ApolloDuoSplitCanReturnFromVisitedProfile(navigation)) return ApolloDuoPaneRouteVisitedProfile;
+    if (navigation.viewControllers.count == 1) return ApolloDuoPaneRouteSubredditPanel;
+    if (ApolloDuoSplitCanRevealPostsOverlay(navigation)) return ApolloDuoPaneRoutePostsOverlay;
+    return ApolloDuoNativeBackPanOwns(navigation) ? ApolloDuoPaneRouteApolloBack : ApolloDuoPaneRoutePaneBack;
 }
 
 // Gestures > Disable Left Swipes turns off the row actions a right swipe would
@@ -186,19 +206,21 @@ static const NSTimeInterval kApolloDuoHighlightGuardDelay = 0.12;
 // swipe only recognizes after the motion, which left the post highlighted throughout.
 // Either direction: a leftward move is a row action, which still runs alongside.
 @property(nonatomic, strong) ApolloDuoHighlightGuard *highlightGuard;
+// The subreddit panel's route: moves only the panel's transform with the finger.
+@property(nonatomic, strong) UIPanGestureRecognizer *panelPan;
 @end
 
 @implementation ApolloDuoBackSwipe
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
     UINavigationController *navigation = self.navigation;
     CGPoint point = [touch locationInView:navigation.view];
-    if (gesture != self.swipe && gesture != self.forwardSwipe && gesture != self.highlightGuard) return NO;
+    if (gesture != self.swipe && gesture != self.forwardSwipe && gesture != self.highlightGuard && gesture != self.panelPan) return NO;
     BOOL back = gesture != self.forwardSwipe && ApolloDuoBackSwipeAcceptsPoint(navigation, point)
         && (ApolloDuoBackSwipeInEdgeStrip(ApolloDuoBackSwipePane(navigation), point)
             || !ApolloDuoBackSwipeTouchOwnsHorizontalDrag(touch.view, navigation.view, ApolloDuoBackSwipeRevealsAtRoot(navigation), NO));
     // A carousel keeps its sideways swipes until it is at its last item, in
     // the strip too: Back gets that from the carousel's own yielding.
-    BOOL forward = gesture != self.swipe && ApolloDuoForwardSwipeAcceptsPoint(navigation, point)
+    BOOL forward = gesture != self.swipe && gesture != self.panelPan && ApolloDuoForwardSwipeAcceptsPoint(navigation, point)
         && !ApolloDuoBackSwipeTouchOwnsHorizontalDrag(touch.view, navigation.view, NO, YES);
     return back || forward;
 }
@@ -209,28 +231,43 @@ static const NSTimeInterval kApolloDuoHighlightGuardDelay = 0.12;
         CGPoint velocity = [self.highlightGuard velocityInView:self.navigation.view];
         return fabs(velocity.x) > fabs(velocity.y) * 1.5;
     }
-    return gesture == self.swipe && ApolloDuoBackSwipeCanNavigate(self.navigation);
+    ApolloDuoPaneRoute route = ApolloDuoPaneRouteFor(self.navigation);
+    BOOL panelDrags = route == ApolloDuoPaneRouteSubredditPanel && ApolloDuoSplitCanDragSubredditPanel(self.navigation);
+    if (gesture == self.panelPan) {
+        CGPoint velocity = [self.panelPan velocityInView:self.navigation.view];
+        return panelDrags && velocity.x > 0 && velocity.x > fabs(velocity.y);
+    }
+    return gesture == self.swipe && route != ApolloDuoPaneRouteNone && route != ApolloDuoPaneRouteApolloBack && !panelDrags;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture
         shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
     // The highlight guard only cancels the row's touch; it never competes with anything.
     if (gesture == self.highlightGuard || other == self.highlightGuard) return YES;
+    if (gesture == self.panelPan || other == self.panelPan) return NO;
     // Vertical table scrolling should not wait for a discrete right swipe.
     return (gesture == self.swipe || gesture == self.forwardSwipe) && [other.view isKindOfClass:UIScrollView.class]
         && other == ((UIScrollView *)other.view).panGestureRecognizer;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture
         shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)other {
+    // The panel's drag decides at once, on its first movement, so scrolling and
+    // row actions lose nothing by waiting for it.
+    if (gesture == self.panelPan) return other != self.highlightGuard && [other isKindOfClass:UIPanGestureRecognizer.class];
     // At the narrow edge strip, give Back priority over horizontal row actions.
     // Away from that strip shouldReceiveTouch: rejects this recognizer outright
     // unless Disable Left Swipes has already turned those row actions off.
     BOOL scrollPan = [other.view isKindOfClass:UIScrollView.class]
         && other == ((UIScrollView *)other.view).panGestureRecognizer;
     return (gesture == self.swipe || gesture == self.forwardSwipe) && other != self.highlightGuard
-        && [other isKindOfClass:UIPanGestureRecognizer.class] && !scrollPan;
+        && other != self.panelPan && [other isKindOfClass:UIPanGestureRecognizer.class] && !scrollPan;
 }
 - (void)guardMoved:(UIPanGestureRecognizer *)gesture {
     // Nothing to do: recognizing is the point (cancelsTouchesInView clears the row highlight).
+}
+- (void)panelPanned:(UIPanGestureRecognizer *)pan {
+    UIView *view = self.navigation.view;
+    ApolloLog(@"[DuoSwipe] feed root: panel drag state=%ld", (long)pan.state);
+    ApolloDuoSplitDragSubredditPanel(self.navigation, pan.state, [pan translationInView:view].x, [pan velocityInView:view].x);
 }
 - (void)swiped:(UISwipeGestureRecognizer *)gesture {
     UINavigationController *navigation = self.navigation;
@@ -240,22 +277,28 @@ static const NSTimeInterval kApolloDuoHighlightGuardDelay = 0.12;
         ApolloDuoSplitRestoreClosedThread(navigation);
         return;
     }
-    if (gesture.state != UIGestureRecognizerStateRecognized || !ApolloDuoBackSwipeCanNavigate(navigation)) return;
-    if (ApolloDuoSplitReturnFromVisitedProfile(navigation)) {
-        ApolloLog(@"[DuoSwipe] visited profile: Back out of the profile");
-        return;
+    if (gesture.state != UIGestureRecognizerStateRecognized) return;
+    switch (ApolloDuoPaneRouteFor(navigation)) {
+        case ApolloDuoPaneRouteNone:
+        case ApolloDuoPaneRouteApolloBack:
+            return;
+        case ApolloDuoPaneRouteVisitedProfile:
+            ApolloLog(@"[DuoSwipe] visited profile: Back out of the profile");
+            ApolloDuoSplitReturnFromVisitedProfile(navigation);
+            return;
+        case ApolloDuoPaneRouteSubredditPanel:
+            ApolloLog(@"[DuoSwipe] feed root: reveal subreddit drawer");
+            ApolloDuoSplitRevealPostsList(navigation);
+            return;
+        case ApolloDuoPaneRoutePostsOverlay:
+            ApolloLog(@"[DuoSwipe] thread in portrait: reveal Posts overlay");
+            ApolloDuoSplitRevealPostsOverlay(navigation);
+            return;
+        case ApolloDuoPaneRoutePaneBack:
+            ApolloLog(@"[DuoSwipe] Back in pane; stack pages=%lu", (unsigned long)navigation.viewControllers.count);
+            [navigation popViewControllerAnimated:!UIAccessibilityIsReduceMotionEnabled()];
+            return;
     }
-    if (navigation.viewControllers.count == 1) {
-        ApolloLog(@"[DuoSwipe] feed root: reveal subreddit drawer");
-        ApolloDuoSplitRevealPostsList(navigation);
-        return;
-    }
-    if (ApolloDuoSplitRevealPostsOverlay(navigation)) {
-        ApolloLog(@"[DuoSwipe] thread in portrait: reveal Posts overlay");
-        return;
-    }
-    ApolloLog(@"[DuoSwipe] Back in pane; stack pages=%lu", (unsigned long)navigation.viewControllers.count);
-    [navigation popViewControllerAnimated:!UIAccessibilityIsReduceMotionEnabled()];
 }
 @end
 
@@ -284,8 +327,14 @@ void ApolloDuoInstallBackSwipe(UINavigationController *navigation) {
     highlightGuard.delegate = owner;
     highlightGuard.name = @"ApolloReborn.Duo.PaneBackHighlightGuard";
     owner.highlightGuard = highlightGuard;
+    UIPanGestureRecognizer *panelPan = [[UIPanGestureRecognizer alloc] initWithTarget:owner action:@selector(panelPanned:)];
+    panelPan.maximumNumberOfTouches = 1;
+    panelPan.delegate = owner;
+    panelPan.name = @"ApolloReborn.Duo.PanelDrag";
+    owner.panelPan = panelPan;
     objc_setAssociatedObject(navigation, &kApolloDuoBackSwipe, owner, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [navigation.view addGestureRecognizer:swipe];
     [navigation.view addGestureRecognizer:forwardSwipe];
     [navigation.view addGestureRecognizer:highlightGuard];
+    [navigation.view addGestureRecognizer:panelPan];
 }

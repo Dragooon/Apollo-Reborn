@@ -47,10 +47,13 @@
 @property(nonatomic) NSUInteger maximumNumberOfTouches;
 @property(nonatomic) BOOL cancelsTouchesInView;
 @property(nonatomic) CGPoint velocity;
+@property(nonatomic) CGPoint translation;
 - (CGPoint)velocityInView:(UIView *)view;
+- (CGPoint)translationInView:(UIView *)view;
 @end
 @implementation UIPanGestureRecognizer
 - (CGPoint)velocityInView:(__unused UIView *)view { return self.velocity; }
+- (CGPoint)translationInView:(__unused UIView *)view { return self.translation; }
 @end
 @interface UISwipeGestureRecognizer : UIGestureRecognizer
 @property(nonatomic) NSUInteger direction, numberOfTouchesRequired;
@@ -149,10 +152,20 @@ static BOOL ApolloDuoSplitRevealPostsList(UINavigationController *nav) {
 }
 static BOOL overlayAccepts;
 static NSUInteger overlayReveals;
+static BOOL ApolloDuoSplitCanRevealPostsOverlay(__unused UINavigationController *nav) { return overlayAccepts; }
 static BOOL ApolloDuoSplitRevealPostsOverlay(__unused UINavigationController *nav) {
     if (!overlayAccepts) return NO;
     overlayReveals++;
     return YES;
+}
+// Apollo's own pan owns Back when set; the panel's drag owns its route when set.
+static BOOL nativeBackOwns;
+static BOOL panelCanDrag;
+static NSInteger panelLastPhase;
+static BOOL ApolloDuoNativeBackPanOwns(__unused UINavigationController *nav) { return nativeBackOwns; }
+static BOOL ApolloDuoSplitCanDragSubredditPanel(__unused UINavigationController *nav) { return panelCanDrag; }
+static void ApolloDuoSplitDragSubredditPanel(__unused UINavigationController *nav, NSInteger phase, __unused CGFloat translation, __unused CGFloat velocity) {
+    panelLastPhase = phase;
 }
 static BOOL ApolloDuoSplitReturnFromVisitedProfile(UINavigationController *nav) {
     if (!ApolloDuoSplitCanReturnFromVisitedProfile(nav)) return NO;
@@ -237,7 +250,7 @@ int main(void) {
         Check(!ApolloDuoBackSwipeCanNavigate(nav), @"outer containment cannot compete with the real pane");
         nav.duoState = nil;
         ApolloDuoInstallBackSwipe(nav); ApolloDuoInstallBackSwipe(nav);
-        Check(ApolloDuoHasBackSwipe(nav) && nav.view.gestureRecognizers.count == 3, @"recognizer installation is idempotent (back swipe + forward swipe + highlight guard)");
+        Check(ApolloDuoHasBackSwipe(nav) && nav.view.gestureRecognizers.count == 4, @"recognizer installation is idempotent (back swipe + forward swipe + highlight guard)");
         ApolloDuoBackSwipe *owner = objc_getAssociatedObject(nav, &kApolloDuoBackSwipe);
         Check(owner.swipe.direction == UISwipeGestureRecognizerDirectionRight && owner.swipe.numberOfTouchesRequired == 1,
               @"Back uses a one-finger right swipe");
@@ -665,6 +678,57 @@ int main(void) {
                   @"remember: the thread and every page pushed over it, without the backstop");
             Check(ApolloDuoClosedThreadPages(@[backstop]).count == 0 && ApolloDuoClosedThreadPages(@[]).count == 0,
                   @"remember: nothing when only the backstop is left");
+        }
+        // One flow: settings choose where a swipe starts, the route alone what it does.
+        @autoreleasepool {
+            UINavigationController *routed = Navigation();
+            ApolloDuoInstallBackSwipe(routed);
+            ApolloDuoBackSwipe *routeOwner = objc_getAssociatedObject(routed, &kApolloDuoBackSwipe);
+            nativeBackOwns = NO;
+            Check(ApolloDuoPaneRouteFor(routed) == ApolloDuoPaneRoutePaneBack, @"route: a thread alone in its pane is one animated Back");
+            Check([routeOwner gestureRecognizerShouldBegin:routeOwner.swipe], @"route: the pane swipe does that Back");
+            nativeBackOwns = YES;
+            Check(ApolloDuoPaneRouteFor(routed) == ApolloDuoPaneRouteApolloBack, @"route: a page to pop goes to Apollo's own pan");
+            Check(![routeOwner gestureRecognizerShouldBegin:routeOwner.swipe], @"route: the pane swipe stands down for Apollo's pan");
+            NSUInteger pagesBefore = routed.viewControllers.count;
+            routeOwner.swipe.state = UIGestureRecognizerStateRecognized;
+            [routeOwner swiped:routeOwner.swipe];
+            Check(routed.viewControllers.count == pagesBefore, @"route: a late swipe never pops a second time");
+            overlayAccepts = YES;
+            Check(ApolloDuoPaneRouteFor(routed) == ApolloDuoPaneRoutePostsOverlay, @"route: a portrait thread shows Posts first");
+            overlayAccepts = NO;
+            nativeBackOwns = NO;
+
+            UINavigationController *panelFeed = Navigation();
+            panelFeed.viewControllers = @[panelFeed.viewControllers.firstObject];
+            ApolloDuoSplitState *panelSplit = [ApolloDuoSplitState new];
+            panelSplit.split = [NSObject new]; panelSplit.host = [TestDuoHost new]; panelSplit.feed = panelFeed;
+            panelSplit.secondary = Navigation();
+            panelFeed.duoState = panelSplit;
+            ApolloDuoInstallBackSwipe(panelFeed);
+            ApolloDuoBackSwipe *panelOwner = objc_getAssociatedObject(panelFeed, &kApolloDuoBackSwipe);
+            Check(ApolloDuoPaneRouteFor(panelFeed) == ApolloDuoPaneRouteSubredditPanel, @"route: a feed root opens the subreddit panel");
+            panelCanDrag = NO;
+            Check([panelOwner gestureRecognizerShouldBegin:panelOwner.swipe], @"panel: the one-shot swipe remains when it can't be dragged");
+            Check(![panelOwner gestureRecognizerShouldBegin:panelOwner.panelPan], @"panel: no drag when it can't be dragged");
+            panelCanDrag = YES;
+            Check(![panelOwner gestureRecognizerShouldBegin:panelOwner.swipe], @"panel: the drag replaces the one-shot swipe");
+            panelOwner.panelPan.velocity = CGPointMake(300, 40);
+            Check([panelOwner gestureRecognizerShouldBegin:panelOwner.panelPan], @"panel: a right drag begins");
+            panelOwner.panelPan.velocity = CGPointMake(40, 300);
+            Check(![panelOwner gestureRecognizerShouldBegin:panelOwner.panelPan], @"panel: scrolling doesn't begin a drag");
+            panelOwner.panelPan.velocity = CGPointMake(-300, 0);
+            Check(![panelOwner gestureRecognizerShouldBegin:panelOwner.panelPan], @"panel: a left drag doesn't begin it");
+            UIPanGestureRecognizer *rowPan = [UIPanGestureRecognizer new];
+            Check([panelOwner gestureRecognizer:panelOwner.panelPan shouldBeRequiredToFailByGestureRecognizer:rowPan]
+                  && ![panelOwner gestureRecognizer:panelOwner.swipe shouldBeRequiredToFailByGestureRecognizer:panelOwner.panelPan],
+                  @"panel: others wait for the drag, and the drag never waits on the swipe");
+            Check(![panelOwner gestureRecognizer:panelOwner.panelPan shouldRecognizeSimultaneouslyWithGestureRecognizer:rowPan],
+                  @"panel: nothing moves alongside the drag");
+            panelOwner.panelPan.state = 7;
+            [panelOwner panelPanned:panelOwner.panelPan];
+            Check(panelLastPhase == 7, @"panel: every phase reaches the panel");
+            panelCanDrag = NO;
         }
         printf("OK: %lu checks\n", (unsigned long)checks);
     }
