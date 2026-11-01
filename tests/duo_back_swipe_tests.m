@@ -109,6 +109,7 @@ static BOOL ApolloDuoSplitRevealPostsList(UINavigationController *nav) {
     drawerReveals++;
     return YES;
 }
+static BOOL ApolloDuoSplitSidebarDragOwns(__unused UINavigationController *nav) { return NO; }
 static BOOL overlayAccepts;
 static NSUInteger overlayReveals;
 static BOOL ApolloDuoSplitRevealPostsOverlay(__unused UINavigationController *nav) {

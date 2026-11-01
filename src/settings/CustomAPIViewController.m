@@ -3014,6 +3014,16 @@ static NSInteger ApolloHeaderStylePickerValue(NSInteger index, BOOL blurAvailabl
                 });
         }];
     panelStyle.visible = ^BOOL { return ApolloDuoUsesAdaptiveBars(); };
+    ApolloSettingsRow *sidebarsFollowFinger =
+        [ApolloSettingsRow switchRowWithID:@"sub.sidebarsFollowFinger"
+                                     title:@"Sidebars Follow Your Finger"
+                                      isOn:^BOOL { return sDuoSidebarsFollowFinger; }
+                                  onToggle:^(UISwitch *sender) {
+                                      sDuoSidebarsFollowFinger = sender.isOn;
+                                      [[NSUserDefaults standardUserDefaults] setBool:sender.isOn
+                                                                              forKey:UDKeyDuoSidebarsFollowFinger];
+                                  }];
+    sidebarsFollowFinger.visible = ^BOOL { return ApolloDuoUsesAdaptiveBars(); };
 
     // Pushes the dedicated Subreddit Sections screen: the FOLLOWING section
     // for followed users, drag-to-reorder for the special sections, and a
@@ -3053,7 +3063,7 @@ static NSInteger ApolloHeaderStylePickerValue(NSInteger index, BOOL blurAvailabl
                                   }];
     return [ApolloSettingsSection sectionWithTitle:@"Subreddit List"
                                             footer:nil
-                                              rows:@[ feedShortcuts, subredditSections, panelStyle,
+                                              rows:@[ feedShortcuts, subredditSections, panelStyle, sidebarsFollowFinger,
                                                       perAccountFavorites, sortFavoritesAlphabetically, confirmFavoriteToggle ]];
 }
 
