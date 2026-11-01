@@ -21,9 +21,8 @@ BOOL ApolloDuoSplitRevealPostsList(UINavigationController *navigation);
 /// Opened portrait, thread on top: shows Posts over it. NO when that doesn't apply.
 BOOL ApolloDuoSplitRevealPostsOverlay(UINavigationController *navigation);
 BOOL ApolloDuoSplitCanRevealPostsOverlay(UINavigationController *navigation);
-/// Opened portrait, Posts over the thread: a left swipe on Posts closes it.
-BOOL ApolloDuoSplitCanClosePostsOverlay(UINavigationController *navigation);
-BOOL ApolloDuoSplitClosePostsOverlay(UINavigationController *navigation);
+/// Posts follows the finger over a portrait thread (its pan lives on the split's host).
+BOOL ApolloDuoSplitCanDragPostsOverlay(UINavigationController *navigation);
 /// Back here pops a page into view, so Apollo's own pan follows the finger.
 BOOL ApolloDuoNativeBackPanOwns(UINavigationController *navigation);
 /// The subreddit panel follows a right drag from the feed root.

@@ -153,14 +153,8 @@ static BOOL ApolloDuoSplitRevealPostsList(UINavigationController *nav) {
 static BOOL overlayAccepts;
 static NSUInteger overlayReveals;
 static BOOL ApolloDuoSplitCanRevealPostsOverlay(__unused UINavigationController *nav) { return overlayAccepts; }
-static BOOL overlayCloses;
-static NSUInteger overlayClosed;
-static BOOL ApolloDuoSplitCanClosePostsOverlay(__unused UINavigationController *nav) { return overlayCloses; }
-static BOOL ApolloDuoSplitClosePostsOverlay(__unused UINavigationController *nav) {
-    if (!overlayCloses) return NO;
-    overlayClosed++;
-    return YES;
-}
+static BOOL overlayCanDrag;
+static BOOL ApolloDuoSplitCanDragPostsOverlay(__unused UINavigationController *nav) { return overlayCanDrag; }
 static BOOL ApolloDuoSplitRevealPostsOverlay(__unused UINavigationController *nav) {
     if (!overlayAccepts) return NO;
     overlayReveals++;
@@ -738,12 +732,17 @@ int main(void) {
             Check(panelLastPhase == 7, @"panel: every phase reaches the panel");
             panelCanDrag = NO;
 
-            overlayCloses = YES;
-            Check([routeOwner gestureRecognizerShouldBegin:routeOwner.forwardSwipe], @"overlay: a left swipe can close Posts");
-            routeOwner.forwardSwipe.state = UIGestureRecognizerStateRecognized;
-            [routeOwner swiped:routeOwner.forwardSwipe];
-            Check(overlayClosed == 1, @"overlay: the left swipe closes Posts");
-            overlayCloses = NO;
+            overlayAccepts = YES;
+            Check([routeOwner gestureRecognizerShouldBegin:routeOwner.swipe], @"overlay: the one-shot swipe remains when Posts can't be dragged");
+            overlayCanDrag = YES;
+            Check(![routeOwner gestureRecognizerShouldBegin:routeOwner.swipe], @"overlay: the drag replaces the one-shot swipe");
+            overlayCanDrag = NO;
+            overlayAccepts = NO;
+            UIPanGestureRecognizer *hostPan = [UIPanGestureRecognizer new];
+            hostPan.name = @"ApolloReborn.Duo.PostsDrag";
+            Check(![routeOwner gestureRecognizer:routeOwner.swipe shouldBeRequiredToFailByGestureRecognizer:hostPan]
+                  && ![routeOwner gestureRecognizer:routeOwner.panelPan shouldBeRequiredToFailByGestureRecognizer:hostPan],
+                  @"overlay: our recognizers never wait on each other, which could deadlock");
         }
         printf("OK: %lu checks\n", (unsigned long)checks);
     }
