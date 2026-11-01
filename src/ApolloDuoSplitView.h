@@ -20,8 +20,6 @@ BOOL ApolloDuoSplitIsSidebarController(UIViewController *controller);
 BOOL ApolloDuoSplitRevealPostsList(UINavigationController *navigation);
 /// Opened portrait, thread on top: shows Posts over it. NO when that doesn't apply.
 BOOL ApolloDuoSplitRevealPostsOverlay(UINavigationController *navigation);
-/// A sidebar opens with a drag that follows the finger here, not with the pane swipe.
-BOOL ApolloDuoSplitSidebarDragOwns(UINavigationController *navigation);
 /// Excludes containment controllers, the open drawer, and adapting columns.
 BOOL ApolloDuoSplitAllowsNavigationSwipe(UINavigationController *navigation);
 /// Only the Posts feed root can open its closed drawer with an edge swipe.

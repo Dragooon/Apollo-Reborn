@@ -32,7 +32,6 @@ static UITableView *ApolloDuoSplitFindTable(UIView *view);
 static void ApolloDuoPostsStopGeometry(UIView *feed);
 @class ApolloDuoSplitHost;
 static void ApolloDuoPostsRememberColumnWidth(ApolloDuoSplitHost *host);
-static void ApolloDuoSidebarDragAttachHide(UIView *surface, ApolloDuoSplitHost *host, BOOL overlay);
 static void ApolloDuoToggleFeedLayout(ApolloDuoSplitHost *host);
 static void ApolloDuoToggleVisibleFeedLayout(UIViewController *controller, BOOL enabled);
 static NSUInteger ApolloDuoFeedStackKeptCount(UINavigationController *feed);
@@ -270,10 +269,6 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
 }
 
 @interface ApolloDuoSplitHost : UIViewController <UISplitViewControllerDelegate, ApolloDuoLayoutControl>
-- (void)beginListDrag;
-- (void)updateListDragOffset:(CGFloat)offset;
-- (void)finishListDragShown:(BOOL)shown velocity:(CGFloat)velocity;
-- (CGFloat)listHiddenOffset;
 @property(nonatomic, strong) UISplitViewController *split;
 @property(nonatomic, strong) UINavigationController *subredditList;
 @property(nonatomic, weak) UINavigationController *postsNavigation;
@@ -299,7 +294,6 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
 // Back rejoins Apollo's native stack; Posts rewraps once, then, not on every show.
 @property(nonatomic) BOOL postsThreadSeparated;
 @property(nonatomic, strong) UIControl *postsOverlayDismiss;
-@property(nonatomic, strong) UISwipeGestureRecognizer *postsOverlaySwipe;
 @property(nonatomic, strong) UIView *postsColumnDivider;
 @property(nonatomic, strong) UIView *listEdge;
 @property(nonatomic) BOOL postsColumnWidthSaveScheduled;
@@ -367,15 +361,13 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
         self.postsOverlayDismiss = [UIControl new];
         [self.postsOverlayDismiss addTarget:self action:@selector(dismissPostsOverlay) forControlEvents:UIControlEventTouchUpInside];
         self.postsOverlayDismiss.hidden = YES;
-        self.postsOverlaySwipe = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(dismissPostsOverlay)];
-        self.postsOverlaySwipe.direction = UISwipeGestureRecognizerDirectionLeft;
-        [self.postsOverlayDismiss addGestureRecognizer:self.postsOverlaySwipe];
-        ApolloDuoSidebarDragAttachHide(self.postsOverlayDismiss, self, YES);
+        UISwipeGestureRecognizer *overlaySwipe = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(dismissPostsOverlay)];
+        overlaySwipe.direction = UISwipeGestureRecognizerDirectionLeft;
+        [self.postsOverlayDismiss addGestureRecognizer:overlaySwipe];
         [self.view addSubview:self.postsOverlayDismiss];
         self.listDismiss = [UIControl new];
         self.listDismiss.backgroundColor = [UIColor.blackColor colorWithAlphaComponent:0.12];
         [self.listDismiss addTarget:self action:@selector(dismissList) forControlEvents:UIControlEventTouchUpInside];
-        ApolloDuoSidebarDragAttachHide(self.listDismiss, self, NO);
         self.listDismiss.hidden = YES;
         [self.view addSubview:self.listDismiss];
         self.listGlass = [[UIVisualEffectView alloc] initWithEffect:nil];
@@ -697,35 +689,6 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
     }
     ApolloLog(@"[DuoSplit] revealing %lu restored feed controls", (unsigned long)buttons.count);
 }
-- (CGFloat)listHiddenOffset { return -self.listGlass.bounds.size.width - 12; }
-// A drag moves the same transform the spring uses, so it can take over from it.
-- (void)beginListDrag {
-    if (!self.listVisible) {
-        [self setListVisible:YES animated:NO];
-        self.listDismiss.alpha = 0;
-        self.listContainer.transform = CGAffineTransformMakeTranslation([self listHiddenOffset], 0);
-    } else {
-        CGFloat current = (self.listContainer.layer.presentationLayer ?: self.listContainer.layer).transform.m41;
-        [self.listContainer.layer removeAnimationForKey:@"ApolloDuoSlide"];
-        self.listContainer.transform = CGAffineTransformMakeTranslation(current, 0);
-    }
-}
-- (void)updateListDragOffset:(CGFloat)offset {
-    CGFloat hidden = [self listHiddenOffset];
-    offset = MIN(0, MAX(hidden, offset));
-    self.listContainer.transform = CGAffineTransformMakeTranslation(offset, 0);
-    self.listDismiss.alpha = hidden < 0 ? 1 - offset / hidden : 1;
-}
-- (void)finishListDragShown:(BOOL)shown velocity:(CGFloat)velocity {
-    if (!shown) {
-        [self setListVisible:NO animated:YES velocity:velocity];
-        return;
-    }
-    CGFloat current = self.listContainer.transform.tx;
-    [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionCurveEaseOut
-                     animations:^{ self.listDismiss.alpha = 1; } completion:nil];
-    ApolloDuoSlideDrawer(self.listContainer, current, 0, velocity, YES, nil);
-}
 - (void)toggleList { [self setListVisible:!self.listVisible animated:YES]; }
 - (void)dismissList { [self setListVisible:NO animated:YES]; }
 - (void)setListVisible:(BOOL)visible animated:(BOOL)animated {
@@ -942,7 +905,6 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
         CGFloat overlayColumn = self.split.primaryColumnWidth;
         self.postsOverlayDismiss.frame = CGRectMake(overlayColumn, 0, MAX(0, self.view.bounds.size.width - overlayColumn), self.view.bounds.size.height);
         self.postsOverlayDismiss.hidden = !self.postsOverlayVisible;
-        if (self.postsOverlaySwipe.enabled == sDuoSidebarsFollowFinger) self.postsOverlaySwipe.enabled = !sDuoSidebarsFollowFinger;
         if (self.splitButtonShowsSidebar != portrait) [self updateSplitButton];
         // The line between Posts and the thread. It lives on the Posts column
         // so it moves with UIKit's separator drag without any layout from here.
@@ -1082,7 +1044,6 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
 @property(nonatomic) BOOL selectingAccountShortcut;
 @property(nonatomic) BOOL changing;
 @property(nonatomic) BOOL postsTogglingSplit;
-@property(nonatomic, weak) UIView *postsColumnDragView;
 @property(nonatomic) BOOL navigationBarWasHidden;
 @property(nonatomic) BOOL needsDefault;
 @property(nonatomic) BOOL halfWidthSidebar;
@@ -1236,11 +1197,15 @@ BOOL ApolloDuoSplitAllowsNavigationSwipe(UINavigationController *nav) {
     return !state.host.listVisible && (nav == state.feed || nav == state.secondary);
 }
 
-static BOOL ApolloDuoPostsOverlayCanReveal(ApolloDuoSplitState *state, UINavigationController *nav);
-
 BOOL ApolloDuoSplitRevealPostsOverlay(UINavigationController *nav) {
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
-    if (!ApolloDuoPostsOverlayCanReveal(state, nav)) return NO;
+    if (!state.split || !state.feed || state.changing || state.host.postsOverlayVisible
+        || state.host.listVisible || state.host.view.bounds.size.width > state.host.view.bounds.size.height) return NO;
+    // A deeper page still goes Back first, one level at a time.
+    BOOL separated = state.host.postsThreadSeparated;
+    if (nav != (separated ? state.secondary : state.feed)
+        || nav.viewControllers.count != (separated ? 2 : ApolloDuoFeedStackKeptCount(nav) + 1)) return NO;
+    if (![nav.topViewController isKindOfClass:ApolloClassCommentsViewController]) return NO;
     state.host.setPostsOverlay(YES);
     return YES;
 }
@@ -1605,11 +1570,6 @@ static void ApolloDuoPostsSyncColumnsWithAnimation(ApolloDuoSplitState *state, B
     // Only a real split (or its width-toggle preparation) needs two stacks.
     // Never migrate a page while Apollo's native push/pop owns its transition.
     if (ApolloDuoPostsHasLandscapeColumns(state)) state.host.postsThreadSeparated = NO;
-    // A drag moves the Posts column by hand. Nothing may outlive the overlay.
-    if (!state.host.postsOverlayVisible) {
-        state.postsColumnDragView.transform = CGAffineTransformIdentity;
-        state.postsColumnDragView = nil;
-    }
     BOOL separateComments = ApolloDuoPostsUsesSplit(state) || state.postsTogglingSplit || state.host.postsThreadSeparated;
     NSUInteger feedKept = ApolloDuoFeedStackKeptCount(state.feed);
     if (separateComments && state.feed.viewControllers.count > feedKept && !state.feed.transitionCoordinator) {
@@ -2211,14 +2171,14 @@ static void ApolloDuoRestoreFeedAnchor(UITableView *table, ApolloDuoFeedAnchor *
 // the subreddit drawer a further level above it. The thread stays on Apollo's
 // native feed stack until this is asked for, so ordinary pushes keep Apollo's
 // own animator, and it rejoins that stack on Back (ApolloDuoPostsRejoinThread).
-static void ApolloDuoPostsSetOverlayAnimated(ApolloDuoSplitState *state, BOOL visible, BOOL animated) {
+static void ApolloDuoPostsSetOverlay(ApolloDuoSplitState *state, BOOL visible) {
     ApolloDuoSplitHost *host = state.host;
     if (!state.feed || !state.split || state.changing || state.postsTogglingSplit
         || host.postsOverlayVisible == visible || ApolloDuoPostsHasLandscapeColumns(state)
         || state.feed.transitionCoordinator || state.secondary.transitionCoordinator) return;
     if (visible && !host.canShowPostsOverlay) return;
     UIView *surface = host.view;
-    BOOL animate = animated && surface.window && !UIAccessibilityIsReduceMotionEnabled();
+    BOOL animate = surface.window && !UIAccessibilityIsReduceMotionEnabled();
     [surface layoutIfNeeded];
     if (!visible) [host setListVisible:NO animated:animate];
     // Posts rewraps as it narrows. Keep the reader's place in it. Under the
@@ -2237,183 +2197,6 @@ static void ApolloDuoPostsSetOverlayAnimated(ApolloDuoSplitState *state, BOOL vi
         ApolloDuoRestoreFeedAnchor(table, anchor);
         [table layoutIfNeeded];
     });
-}
-
-static void ApolloDuoPostsSetOverlay(ApolloDuoSplitState *state, BOOL visible) {
-    ApolloDuoPostsSetOverlayAnimated(state, visible, YES);
-}
-
-static BOOL ApolloDuoPostsOverlayCanReveal(ApolloDuoSplitState *state, UINavigationController *nav) {
-    if (!state.split || !state.feed || state.changing || state.host.postsOverlayVisible
-        || state.host.listVisible || state.host.view.bounds.size.width > state.host.view.bounds.size.height) return NO;
-    // A deeper page still goes Back first, one level at a time.
-    BOOL separated = state.host.postsThreadSeparated;
-    if (nav != (separated ? state.secondary : state.feed)
-        || nav.viewControllers.count != (separated ? 2 : ApolloDuoFeedStackKeptCount(nav) + 1)) return NO;
-    return [nav.topViewController isKindOfClass:ApolloClassCommentsViewController];
-}
-
-// UIKit's own column gesture is interactive, but Apollo's Back owns that edge and
-// the column doesn't exist until a thread is separated. So open the column at once,
-// offscreen, and move it with the finger; the release lands it or closes it again.
-// The rewrap this costs happens once per thread, as a touch-down, not per frame.
-typedef NS_ENUM(NSInteger, ApolloDuoSidebarDragKind) {
-    ApolloDuoSidebarDragNone,
-    ApolloDuoSidebarDragDrawer,
-    ApolloDuoSidebarDragOverlay,
-};
-@interface ApolloDuoSidebarDrag : NSObject <UIGestureRecognizerDelegate>
-@property(nonatomic, weak) UINavigationController *navigation; // Opening from a pane's edge.
-@property(nonatomic, weak) ApolloDuoSplitHost *host;           // Closing from what covers the content.
-@property(nonatomic) BOOL hidesOverlay;
-@property(nonatomic) ApolloDuoSidebarDragKind kind;
-@property(nonatomic) CGFloat startOffset;
-@property(nonatomic, weak) UIPanGestureRecognizer *pan;
-@end
-
-static UIView *ApolloDuoPostsColumnView(ApolloDuoSplitState *state) {
-    UIView *splitView = state.split.viewIfLoaded;
-    UIView *view = state.feed.viewIfLoaded;
-    while (view && view.superview && view.superview != splitView) view = view.superview;
-    return view.superview == splitView ? view : nil;
-}
-
-@implementation ApolloDuoSidebarDrag
-- (ApolloDuoSplitState *)state {
-    return ApolloDuoSplitStateForNavigation(self.navigation ?: self.host.postsNavigation, NO);
-}
-- (ApolloDuoSidebarDragKind)availableKind {
-    if (!sDuoSidebarsFollowFinger || !self.state.split || self.state.changing || self.state.postsTogglingSplit) return ApolloDuoSidebarDragNone;
-    if (self.host) {
-        if (self.hidesOverlay) return self.host.postsOverlayVisible && !self.host.listVisible ? ApolloDuoSidebarDragOverlay : ApolloDuoSidebarDragNone;
-        return self.host.listVisible ? ApolloDuoSidebarDragDrawer : ApolloDuoSidebarDragNone;
-    }
-    if (ApolloDuoSplitCanRevealPostsListWithSwipe(self.navigation)) return ApolloDuoSidebarDragDrawer;
-    return ApolloDuoPostsOverlayCanReveal(self.state, self.navigation) ? ApolloDuoSidebarDragOverlay : ApolloDuoSidebarDragNone;
-}
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
-    if (self.availableKind == ApolloDuoSidebarDragNone) return NO;
-    if (self.host) return YES;
-    UINavigationController *navigation = self.navigation;
-    if (!navigation.viewIfLoaded.window || navigation.transitionCoordinator || navigation.presentedViewController
-        || navigation.topViewController.presentedViewController
-        || [NSUserDefaults.standardUserDefaults boolForKey:@"DisableNavigationGestures"]) return NO;
-    // The same strip the pane swipe starts from.
-    CGRect pane = ApolloDuoSplitContentFrame(navigation, navigation.view);
-    if (CGRectIsNull(pane)) pane = navigation.view.bounds;
-    CGPoint point = [touch locationInView:navigation.view];
-    if (!CGRectContainsPoint(pane, point) || point.x > CGRectGetMinX(pane) + 28.0) return NO;
-    return CGRectGetMinX(pane) <= 0.0 || point.x >= CGRectGetMinX(pane) + 12.0;
-}
-- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
-    if (gesture != self.pan || self.availableKind == ApolloDuoSidebarDragNone) return NO;
-    CGPoint velocity = [self.pan velocityInView:self.pan.view];
-    if (fabs(velocity.x) <= fabs(velocity.y)) return NO;
-    return self.host ? velocity.x < 0 : velocity.x > 0;
-}
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
-    return [other.view isKindOfClass:UIScrollView.class] && other == ((UIScrollView *)other.view).panGestureRecognizer;
-}
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)other {
-    // At the narrow strip the sidebar goes ahead of a row's horizontal actions.
-    BOOL scrollPan = [other.view isKindOfClass:UIScrollView.class] && other == ((UIScrollView *)other.view).panGestureRecognizer;
-    return [other isKindOfClass:UIPanGestureRecognizer.class] && !scrollPan;
-}
-- (void)panned:(UIPanGestureRecognizer *)pan {
-    ApolloDuoSplitState *state = self.state;
-    ApolloDuoSplitHost *host = state.host;
-    UIView *reference = host.view;
-    CGFloat translation = [pan translationInView:reference].x;
-    CGFloat velocity = [pan velocityInView:reference].x;
-    if (pan.state == UIGestureRecognizerStateBegan) {
-        self.kind = self.availableKind;
-        if (self.kind == ApolloDuoSidebarDragDrawer) {
-            [host beginListDrag];
-            self.startOffset = host.listContainer.transform.tx;
-        } else if (self.kind == ApolloDuoSidebarDragOverlay) {
-            if (!host.postsOverlayVisible) ApolloDuoPostsSetOverlayAnimated(state, YES, NO);
-            [host.view layoutIfNeeded];
-            UIView *column = ApolloDuoPostsColumnView(state);
-            if (!host.postsOverlayVisible || !column) {
-                ApolloLog(@"[DuoSplit] Posts drag couldn't take the column; overlay=%d", host.postsOverlayVisible);
-                self.kind = ApolloDuoSidebarDragNone;
-                return;
-            }
-            state.postsColumnDragView = column;
-            self.startOffset = self.hidesOverlay ? 0 : -CGRectGetWidth(column.bounds);
-            column.transform = CGAffineTransformMakeTranslation(self.startOffset, 0);
-        }
-        ApolloLog(@"[DuoSplit] sidebar drag began kind=%ld start=%.0f", (long)self.kind, self.startOffset);
-        return;
-    }
-    if (self.kind == ApolloDuoSidebarDragNone) return;
-    CGFloat offset = self.startOffset + translation;
-    if (self.kind == ApolloDuoSidebarDragDrawer) {
-        if (pan.state == UIGestureRecognizerStateChanged) {
-            [host updateListDragOffset:offset];
-            return;
-        }
-        CGFloat hidden = [host listHiddenOffset];
-        BOOL completed = pan.state == UIGestureRecognizerStateEnded;
-        BOOL shown = completed ? offset + velocity * 0.15 > hidden / 2 : self.startOffset > hidden / 2;
-        [host finishListDragShown:shown velocity:completed ? velocity : 0];
-    } else {
-        UIView *column = state.postsColumnDragView;
-        CGFloat width = CGRectGetWidth(column.bounds);
-        if (pan.state == UIGestureRecognizerStateChanged) {
-            column.transform = CGAffineTransformMakeTranslation(MIN(0, MAX(-width, offset)), 0);
-            return;
-        }
-        BOOL completed = pan.state == UIGestureRecognizerStateEnded;
-        BOOL shown = completed ? offset + velocity * 0.15 > -width / 2 : self.startOffset > -width / 2;
-        NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() || !column ? 0 : 0.28;
-        [UIView animateWithDuration:duration delay:0 usingSpringWithDamping:1 initialSpringVelocity:0
-                            options:UIViewAnimationOptionBeginFromCurrentState animations:^{
-            column.transform = shown ? CGAffineTransformIdentity : CGAffineTransformMakeTranslation(-width, 0);
-        } completion:^(__unused BOOL finished) {
-            if (shown) {
-                [host.view setNeedsLayout];
-                return;
-            }
-            // Offscreen already, so the column goes without a second animation.
-            ApolloDuoPostsSetOverlayAnimated(state, NO, NO);
-        }];
-    }
-    ApolloLog(@"[DuoSplit] sidebar drag ended kind=%ld state=%ld", (long)self.kind, (long)pan.state);
-    self.kind = ApolloDuoSidebarDragNone;
-}
-@end
-
-static char kApolloDuoSidebarDragKey;
-static void ApolloDuoSidebarDragInstall(UIView *view, ApolloDuoSidebarDrag *drag) {
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:drag action:@selector(panned:)];
-    pan.delegate = drag;
-    pan.maximumNumberOfTouches = 1;
-    pan.name = @"ApolloReborn.Duo.SidebarDrag";
-    drag.pan = pan;
-    objc_setAssociatedObject(view, &kApolloDuoSidebarDragKey, drag, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [view addGestureRecognizer:pan];
-}
-
-static void ApolloDuoSidebarDragAttachHide(UIView *surface, ApolloDuoSplitHost *host, BOOL overlay) {
-    ApolloDuoSidebarDrag *drag = [ApolloDuoSidebarDrag new];
-    drag.host = host;
-    drag.hidesOverlay = overlay;
-    ApolloDuoSidebarDragInstall(surface, drag);
-}
-
-static void ApolloDuoSidebarDragAttachReveal(UINavigationController *navigation) {
-    UIView *view = navigation.viewIfLoaded;
-    if (!view || !ApolloDeviceIsDuo() || objc_getAssociatedObject(view, &kApolloDuoSidebarDragKey)) return;
-    ApolloDuoSidebarDrag *drag = [ApolloDuoSidebarDrag new];
-    drag.navigation = navigation;
-    ApolloDuoSidebarDragInstall(view, drag);
-}
-
-BOOL ApolloDuoSplitSidebarDragOwns(UINavigationController *navigation) {
-    if (!sDuoSidebarsFollowFinger) return NO;
-    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(navigation, NO);
-    return ApolloDuoSplitCanRevealPostsListWithSwipe(navigation) || ApolloDuoPostsOverlayCanReveal(state, navigation);
 }
 
 // Put a separated thread back on the feed stack at the same full-width geometry,
@@ -4144,7 +3927,6 @@ static void ApolloDuoInstallListReselectionGuard(Class listClass) {
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
     ApolloDuoInstallBackSwipe((id)self);
-    ApolloDuoSidebarDragAttachReveal((id)self);
     ApolloDuoSplitScheduleUpdate();
 }
 %end

@@ -203,7 +203,6 @@ extern NSInteger sDuoLandscapeFeedLayout;
 // Standard (default NO) or Liquid Glass for the open Duo subreddit panel.
 extern BOOL sDuoSubredditPanelGlassEnabled;
 extern BOOL sDuoSubredditPanelSidebarEnabled;
-extern BOOL sDuoSidebarsFollowFinger;
 BOOL ApolloSupportsNativeTabBarScrollBehavior(void);
 #ifdef __cplusplus
 }
