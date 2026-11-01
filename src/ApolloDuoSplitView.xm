@@ -377,7 +377,6 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
         // Flush with the display's edge at full height, as Mail's Mailboxes
         // are over its list on this display; a hairline ends it on the other side.
         self.listEdge = [UIView new];
-        self.listEdge.backgroundColor = UIColor.separatorColor;
         [self.listContainer addSubview:self.listEdge];
         // A managed bar joins Duo's global vertical navigation rail even
         // inside this narrow drawer. A standalone native bar keeps Apollo's
@@ -880,13 +879,14 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
         UIView *postsColumn = self.postsNavigation.viewIfLoaded;
         if (postsColumn && !self.postsColumnDivider) {
             self.postsColumnDivider = [UIView new];
-            self.postsColumnDivider.backgroundColor = UIColor.separatorColor;
             self.postsColumnDivider.userInteractionEnabled = NO;
             self.postsColumnDivider.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleHeight;
             [postsColumn addSubview:self.postsColumnDivider];
         }
-        CGFloat dividerWidth = 1.0 / MAX(1.0, self.traitCollection.displayScale);
-        self.postsColumnDivider.frame = CGRectMake(CGRectGetWidth(postsColumn.bounds) - dividerWidth, 0, dividerWidth, CGRectGetHeight(postsColumn.bounds));
+        // A solid point in the theme's own separator color, so a custom theme sets it.
+        UIColor *dividerColor = ApolloThemeSeparatorColor() ?: UIColor.opaqueSeparatorColor;
+        if (![self.postsColumnDivider.backgroundColor isEqual:dividerColor]) self.postsColumnDivider.backgroundColor = dividerColor;
+        self.postsColumnDivider.frame = CGRectMake(CGRectGetWidth(postsColumn.bounds) - 1.0, 0, 1.0, CGRectGetHeight(postsColumn.bounds));
         self.postsColumnDivider.hidden = !self.postsColumnsPaired;
         ApolloDuoPostsRememberColumnWidth(self);
         // Full height: the list's safe area keeps its rows clear of a bottom tab bar.
@@ -896,8 +896,9 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
         self.listContainer.bounds = CGRectMake(0, 0, width, height);
         self.listContainer.center = CGPointMake(width / 2, height / 2);
         self.listGlass.frame = self.listContainer.bounds;
-        CGFloat listEdgeWidth = 1.0 / MAX(1.0, self.traitCollection.displayScale);
-        self.listEdge.frame = CGRectMake(width - listEdgeWidth, 0, listEdgeWidth, height);
+        UIColor *listEdgeColor = ApolloThemeSeparatorColor() ?: UIColor.opaqueSeparatorColor;
+        if (![self.listEdge.backgroundColor isEqual:listEdgeColor]) self.listEdge.backgroundColor = listEdgeColor;
+        self.listEdge.frame = CGRectMake(width - 1.0, 0, 1.0, height);
         // The drawer covers/intercepts its underlying controls. Keep the
         // navigation items installed so opening it never reflows the bar.
         self.listButton.hidden = NO;
