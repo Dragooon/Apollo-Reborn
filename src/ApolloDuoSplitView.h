@@ -25,7 +25,9 @@ BOOL ApolloDuoSplitCanRevealPostsOverlay(UINavigationController *navigation);
 BOOL ApolloDuoSplitCanDragPostsOverlay(UINavigationController *navigation);
 /// Back here pops a page into view, so Apollo's own pan follows the finger.
 BOOL ApolloDuoNativeBackPanOwns(UINavigationController *navigation);
-/// The subreddit panel follows a right drag from the feed root.
+/// Landscape: a right swipe on the thread beside Posts opens the subreddit panel.
+BOOL ApolloDuoSplitThreadSwipeOpensPanel(UINavigationController *navigation);
+/// The subreddit panel follows a right drag from the feed root or that thread.
 BOOL ApolloDuoSplitCanDragSubredditPanel(UINavigationController *navigation);
 void ApolloDuoSplitDragSubredditPanel(UINavigationController *navigation, UIGestureRecognizerState phase, CGFloat translation, CGFloat velocity);
 /// Excludes containment controllers, the open drawer, and adapting columns.

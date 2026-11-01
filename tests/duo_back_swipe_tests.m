@@ -153,6 +153,8 @@ static BOOL ApolloDuoSplitRevealPostsList(UINavigationController *nav) {
 static BOOL overlayAccepts;
 static NSUInteger overlayReveals;
 static BOOL ApolloDuoSplitCanRevealPostsOverlay(__unused UINavigationController *nav) { return overlayAccepts; }
+static BOOL threadOpensPanel;
+static BOOL ApolloDuoSplitThreadSwipeOpensPanel(__unused UINavigationController *nav) { return threadOpensPanel; }
 static BOOL overlayCanDrag;
 static BOOL ApolloDuoSplitCanDragPostsOverlay(__unused UINavigationController *nav) { return overlayCanDrag; }
 static BOOL ApolloDuoSplitRevealPostsOverlay(__unused UINavigationController *nav) {
@@ -741,6 +743,9 @@ int main(void) {
             Check(![routeOwner gestureRecognizerShouldBegin:routeOwner.swipe], @"overlay: the drag replaces the one-shot swipe");
             overlayCanDrag = NO;
             overlayAccepts = NO;
+            threadOpensPanel = YES;
+            Check(ApolloDuoPaneRouteFor(routed) == ApolloDuoPaneRouteSubredditPanel, @"route: a thread beside Posts opens the sidebar instead of closing");
+            threadOpensPanel = NO;
             UIPanGestureRecognizer *hostPan = [UIPanGestureRecognizer new];
             hostPan.name = @"ApolloReborn.Duo.PostsDrag";
             Check(![routeOwner gestureRecognizer:routeOwner.swipe shouldBeRequiredToFailByGestureRecognizer:hostPan]

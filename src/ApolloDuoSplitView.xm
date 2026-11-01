@@ -576,7 +576,7 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
     // Sidebar's rows sit on a material too, so it uses the glass style's surfaces.
     // Beside Posts it's always the flush sidebar: a floating panel there would be
     // an overlay on an overlay.
-    BOOL sidebar = sDuoSubredditPanelSidebarEnabled || self.postsOverlayVisible;
+    BOOL sidebar = sDuoSubredditPanelSidebarEnabled || self.postsOverlayVisible || self.postsColumnsPaired;
     BOOL translucent = sDuoSubredditPanelGlassEnabled || sidebar;
     BOOL changed = !self.listStyleApplied || self.listUsesGlass != translucent
         || self.listUsesSidebar != sidebar;
@@ -748,7 +748,8 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
 - (CGFloat)listHiddenOffset { return -self.listGlass.bounds.size.width - (self.listUsesSidebar ? 0 : 12); }
 // How far the columns move aside for the sidebar, as Mail moves its list. It moves
 // the whole split, a view we own, so UIKit's columns and their rows don't relayout.
-- (CGFloat)listColumnsShift { return self.listVisible && self.postsOverlayVisible ? self.listGlass.bounds.size.width : 0; }
+- (BOOL)listSitsBesidePosts { return self.postsOverlayVisible || self.postsColumnsPaired; }
+- (CGFloat)listColumnsShift { return self.listVisible && [self listSitsBesidePosts] ? self.listGlass.bounds.size.width : 0; }
 // A drag moves the same transform the spring uses, so it can take over from it.
 // Only that transform moves with the finger: nothing here lays out.
 - (void)beginListDrag {
@@ -770,7 +771,7 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
     CGFloat offset = MIN(0, MAX(hidden, self.listDragStart + translation));
     self.listContainer.transform = CGAffineTransformMakeTranslation(offset, 0);
     self.listDismiss.alpha = hidden < 0 ? 1 - offset / hidden : 1;
-    if (self.postsOverlayVisible) self.split.view.transform = CGAffineTransformMakeTranslation(offset - hidden, 0);
+    if ([self listSitsBesidePosts]) self.split.view.transform = CGAffineTransformMakeTranslation(offset - hidden, 0);
 }
 - (void)finishListDrag:(CGFloat)translation velocity:(CGFloat)velocity cancelled:(BOOL)cancelled {
     CGFloat hidden = [self listHiddenOffset];
@@ -785,7 +786,7 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
     [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionCurveEaseOut
                      animations:^{ self.listDismiss.alpha = 1; } completion:nil];
     ApolloDuoSlideDrawer(self.listContainer, offset, 0, velocity, YES, nil);
-    if (self.postsOverlayVisible) ApolloDuoSlideDrawer(self.split.view, self.split.view.transform.tx, [self listColumnsShift], velocity, YES, nil);
+    if ([self listSitsBesidePosts]) ApolloDuoSlideDrawer(self.split.view, self.split.view.transform.tx, [self listColumnsShift], velocity, YES, nil);
 }
 - (void)listClosePanned:(UIPanGestureRecognizer *)pan {
     CGFloat translation = [pan translationInView:self.view].x;
@@ -802,7 +803,7 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
     CGPoint velocity = [(UIPanGestureRecognizer *)gesture velocityInView:self.view];
     if (gesture == self.postsDragPan) {
         if (fabs(velocity.x) <= fabs(velocity.y)) return NO;
-        return self.postsOverlayVisible ? velocity.x < 0 : velocity.x > 0;
+        return self.postsOverlayVisible || self.listVisible ? velocity.x < 0 : velocity.x > 0;
     }
     if (gesture == self.postsOverlayPanelPan) {
         // Opens the subreddits from over the dimmed thread; a left move stays the close swipe.
@@ -1043,11 +1044,11 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
     [self scheduleSplitSafeAreaSync];
     if (self.subredditList) {
         CGFloat width = self.postsOverlayVisible ? ApolloDuoPortraitPanelWidth(self.view.bounds.size.width)
-            : ApolloDuoSubredditDrawerWidth(self.view.bounds.size.width);
+            : self.postsColumnsPaired ? 320.0 : ApolloDuoSubredditDrawerWidth(self.view.bounds.size.width);
         BOOL portrait = self.view.bounds.size.width <= self.view.bounds.size.height;
         // Beside Posts, the sidebar moves everything right, so what closes them is
         // only the strip of thread left showing. Posts stays live between them.
-        CGFloat columnsShift = self.listVisible && self.postsOverlayVisible ? width : 0;
+        CGFloat columnsShift = self.listVisible && [self listSitsBesidePosts] ? width : 0;
         if (!self.listDragging && self.split.view.transform.tx != columnsShift) self.split.view.transform = CGAffineTransformMakeTranslation(columnsShift, 0);
         CGFloat overlayColumn = self.split.primaryColumnWidth + columnsShift;
         self.postsOverlayDismiss.frame = CGRectMake(overlayColumn, 0, MAX(0, self.view.bounds.size.width - overlayColumn), self.view.bounds.size.height);
@@ -1076,7 +1077,7 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
             self.postsResizePan.enabled = YES;
         }
         if (!self.postsResizeCover) {
-            self.postsResizeStrip.hidden = !resizable;
+            self.postsResizeStrip.hidden = !resizable || self.listVisible;
             self.postsResizeStrip.frame = CGRectMake(self.split.primaryColumnWidth - 12.0, 0, 24.0, self.view.bounds.size.height);
         }
         CGFloat bottom = CGRectGetMaxY(self.view.bounds) - 12;
@@ -1097,7 +1098,8 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
         // Sidebar runs full height: the list's safe area keeps its rows clear of a bottom tab bar.
         CGFloat height = self.listUsesSidebar ? self.view.bounds.size.height : MAX(0, bottom - 12);
         self.listDismiss.frame = columnsShift > 0 ? self.postsOverlayDismiss.frame : self.view.bounds;
-        self.listDismiss.backgroundColor = columnsShift > 0 ? UIColor.clearColor : [UIColor.blackColor colorWithAlphaComponent:0.12];
+        // UIKit already dims the thread behind portrait's Posts.
+        self.listDismiss.backgroundColor = self.postsOverlayVisible ? UIColor.clearColor : [UIColor.blackColor colorWithAlphaComponent:0.12];
         // Bounds/center stay independent of the presentation transform.
         self.listContainer.bounds = CGRectMake(0, 0, width, height);
         CGFloat listInset = self.listUsesSidebar ? 0 : 12;
@@ -1420,8 +1422,16 @@ BOOL ApolloDuoNativeBackPanOwns(UINavigationController *nav) {
         && ApolloDuoSplitPopRevealsContent(nav);
 }
 
+// Landscape, thread beside Posts: Posts is already showing, so the next level out is
+// the sidebar, as in Mail. Closing the thread stays with its Back button.
+BOOL ApolloDuoSplitThreadSwipeOpensPanel(UINavigationController *nav) {
+    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
+    return state.split && state.feed && !state.changing && nav == state.secondary && state.host.postsColumnsPaired
+        && !state.host.listVisible && nav.viewControllers.count == 2;
+}
+
 BOOL ApolloDuoSplitCanDragSubredditPanel(UINavigationController *nav) {
-    return ApolloDuoSplitCanRevealPostsListWithSwipe(nav);
+    return ApolloDuoSplitCanRevealPostsListWithSwipe(nav) || ApolloDuoSplitThreadSwipeOpensPanel(nav);
 }
 
 void ApolloDuoSplitDragSubredditPanel(UINavigationController *nav, UIGestureRecognizerState phase, CGFloat translation, CGFloat velocity) {
@@ -2372,7 +2382,6 @@ static void ApolloDuoPostsChangeColumns(ApolloDuoSplitState *state, BOOL animate
     ApolloDuoPostsStopGeometry(state.secondary.viewIfLoaded);
     [state.host.postsTransitionSnapshot removeFromSuperview];
     state.host.postsTransitionSnapshot = nil;
-    state.feed.view.hidden = NO;
     [state.secondary.view.layer removeAnimationForKey:@"ApolloDuoSlide"];
     state.postsTogglingSplit = YES;
     void (^commitTables)(void) = ^{ ApolloDuoPostsCommitTables(state); };
@@ -2544,38 +2553,68 @@ static void ApolloDuoPostsPlaceColumnPicture(ApolloDuoSplitHost *host, UIView *p
     [host.view insertSubview:picture belowSubview:host.listDismiss];
 }
 
-// Open Posts for real, and return a picture of it with the real column hidden under
-// it until the picture lands. UIKit decides how a column is hosted, so moving its
-// real views isn't dependable. `cover` holds the thread as it was, undimmed.
+// While Posts moves, a picture of the thread covers the real columns: hiding only
+// the Posts view left UIKit's empty column background showing as a band, with UIKit's
+// dim over it. Our own dim on that picture follows the move, at the depth Mail's shows.
+static const CGFloat kApolloDuoPostsCoverDim = 0.2;
+
+static void ApolloDuoPostsSetCoverProgress(UIView *cover, CGFloat progress) {
+    cover.subviews.lastObject.alpha = kApolloDuoPostsCoverDim * progress;
+}
+
+static void ApolloDuoPostsPlaceCover(ApolloDuoSplitHost *host, UIView *cover, CGRect frame, CGFloat progress) {
+    cover.frame = frame;
+    cover.userInteractionEnabled = NO;
+    UIView *dim = [[UIView alloc] initWithFrame:cover.bounds];
+    dim.backgroundColor = UIColor.blackColor;
+    [cover addSubview:dim];
+    ApolloDuoPostsSetCoverProgress(cover, progress);
+    [host.view insertSubview:cover belowSubview:host.listDismiss];
+}
+
+// Open Posts for real under the cover, and return a picture of it to move above that.
 static UIView *ApolloDuoPostsOpenBehindPicture(ApolloDuoSplitState *state, UIView **cover) {
     ApolloDuoSplitHost *host = state.host;
     UIView *surface = host.view;
     UIView *posts = state.feed.view;
-    posts.hidden = NO;
-    // Taking the arriving picture commits the settled layout, so cover it meanwhile.
     UIView *thread = [surface resizableSnapshotViewFromRect:surface.bounds afterScreenUpdates:NO withCapInsets:UIEdgeInsetsZero];
-    if (thread) {
-        thread.frame = surface.bounds;
-        thread.userInteractionEnabled = NO;
-        [surface insertSubview:thread belowSubview:host.listDismiss];
-    }
+    if (thread) ApolloDuoPostsPlaceCover(host, thread, surface.bounds, 0);
     ApolloDuoPostsSettleOverlay(state, YES);
     UIView *arriving = [posts snapshotViewAfterScreenUpdates:YES];
     *cover = thread;
     ApolloLog(@"[DuoSplit] posts overlay picture=%d width=%.1f", arriving != nil, CGRectGetWidth(posts.bounds));
     if (!arriving) return nil;
     ApolloDuoPostsPlaceColumnPicture(host, arriving, [surface convertRect:posts.bounds fromView:posts]);
-    posts.hidden = YES;
     host.postsTransitionSnapshot = arriving;
     return arriving;
 }
 
-// The picture is down: drop it and show the real column.
-static void ApolloDuoPostsLandColumnPicture(ApolloDuoSplitHost *host, UIView *picture) {
-    [picture removeFromSuperview];
-    if (host.postsTransitionSnapshot != picture) return;
-    host.postsTransitionSnapshot = nil;
-    host.postsNavigation.viewIfLoaded.hidden = NO;
+static void ApolloDuoPostsSetOverlayAnimated(ApolloDuoSplitState *state, BOOL visible, BOOL animated);
+
+// Send the picture home. Shown: it lands, then the cover fades to reveal the real
+// thread and dim around it, and the real Posts takes over from the identical picture.
+// Not shown: the real column closes while it's out of sight.
+static void ApolloDuoPostsLandPicture(ApolloDuoSplitHost *host, UIView *picture, UIView *cover,
+                                      CGFloat offset, BOOL shown, CGFloat velocity) {
+    CGFloat width = CGRectGetWidth(picture.bounds);
+    [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionCurveEaseOut
+                     animations:^{ ApolloDuoPostsSetCoverProgress(cover, shown ? 1 : 0); } completion:nil];
+    __weak ApolloDuoSplitHost *weakHost = host;
+    void (^clear)(void) = ^{
+        [picture removeFromSuperview];
+        [cover removeFromSuperview];
+        if (weakHost.postsTransitionSnapshot == picture) weakHost.postsTransitionSnapshot = nil;
+    };
+    ApolloDuoSlideDrawer(picture, offset, shown ? 0 : -width, velocity, YES, ^{
+        ApolloDuoSplitHost *strongHost = weakHost;
+        if (shown) {
+            [UIView animateWithDuration:0.12 animations:^{ cover.alpha = 0; }
+                             completion:^(__unused BOOL finished) { clear(); }];
+            return;
+        }
+        if (strongHost) ApolloDuoPostsSetOverlayAnimated(ApolloDuoSplitStateForNavigation(strongHost.postsNavigation, NO), NO, NO);
+        clear();
+    });
 }
 
 static void ApolloDuoPostsSetOverlayAnimated(ApolloDuoSplitState *state, BOOL visible, BOOL animated) {
@@ -2587,15 +2626,13 @@ static void ApolloDuoPostsSetOverlayAnimated(ApolloDuoSplitState *state, BOOL vi
     if (visible && animate) {
         UIView *cover = nil;
         UIView *arriving = ApolloDuoPostsOpenBehindPicture(state, &cover);
-        [cover removeFromSuperview];
-        if (!arriving) return;
-        __weak ApolloDuoSplitHost *weakHost = host;
-        ApolloDuoSlideDrawer(arriving, -CGRectGetWidth(arriving.frame), 0, 0, YES, ^{
-            ApolloDuoPostsLandColumnPicture(weakHost, arriving);
-        });
+        if (!arriving) {
+            [cover removeFromSuperview];
+            return;
+        }
+        ApolloDuoPostsLandPicture(host, arriving, cover, -CGRectGetWidth(arriving.bounds), YES, 0);
         return;
     }
-    posts.hidden = NO;
     CGRect postsFrame = [surface convertRect:posts.bounds fromView:posts];
     // Both levels leave together, in one picture, with the sidebar on its left.
     if (!visible && host.listVisible) postsFrame = CGRectMake(0, CGRectGetMinY(postsFrame), CGRectGetMaxX(postsFrame), CGRectGetHeight(postsFrame));
@@ -2627,7 +2664,7 @@ static BOOL ApolloDuoPostsDragAcceptsTouch(ApolloDuoSplitHost *host, UITouch *to
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(host.postsNavigation, NO);
     if (!state.split || !state.feed || state.changing || state.postsTogglingSplit
         || [NSUserDefaults.standardUserDefaults boolForKey:@"DisableNavigationGestures"]) return NO;
-    if (!host.postsOverlayVisible) {
+    if (!host.postsOverlayVisible && !host.listVisible) {
         UINavigationController *threadPane = host.postsThreadSeparated ? state.secondary : state.feed;
         return ApolloDuoSplitCanRevealPostsOverlay(threadPane) && ApolloDuoBackSwipeAcceptsTouch(threadPane, touch);
     }
@@ -2642,17 +2679,21 @@ static void ApolloDuoPostsDragPanned(ApolloDuoSplitHost *host, UIPanGestureRecog
     CGFloat velocity = [pan velocityInView:surface].x;
     if (pan.state == UIGestureRecognizerStateBegan) {
         host.postsDragKind = ApolloDuoPostsDragNone;
-        if (host.postsOverlayVisible && host.listVisible) {
+        if (host.listVisible) {
             host.postsDragKind = ApolloDuoPostsDragSidebar;
             [host beginListDrag];
         } else if (host.postsOverlayVisible) {
             UIView *posts = state.feed.view;
             CGRect frame = [surface convertRect:posts.bounds fromView:posts];
             UIView *picture = [surface resizableSnapshotViewFromRect:frame afterScreenUpdates:NO withCapInsets:UIEdgeInsetsZero];
-            if (!picture || state.changing) return;
+            // The thread alone, from under Posts.
+            UIView *threadView = state.secondary.view;
+            UIView *cover = [threadView snapshotViewAfterScreenUpdates:NO];
+            if (!picture || !cover || state.changing) return;
+            ApolloDuoPostsPlaceCover(host, cover, [surface convertRect:threadView.bounds fromView:threadView], 1);
             ApolloDuoPostsPlaceColumnPicture(host, picture, frame);
-            posts.hidden = YES;
             host.postsTransitionSnapshot = picture;
+            host.postsDragCover = cover;
             host.postsDragPicture = picture;
             host.postsDragKind = ApolloDuoPostsDragClosing;
         } else if (ApolloDuoPostsCanChangeOverlay(state, YES)) {
@@ -2689,7 +2730,7 @@ static void ApolloDuoPostsDragPanned(ApolloDuoSplitHost *host, UIPanGestureRecog
     CGFloat offset = MIN(0, MAX(-width, start + translation));
     if (pan.state == UIGestureRecognizerStateChanged) {
         picture.transform = CGAffineTransformMakeTranslation(offset, 0);
-        cover.alpha = width > 0 ? -offset / width : 0;
+        ApolloDuoPostsSetCoverProgress(cover, width > 0 ? 1 + offset / width : 0);
         return;
     }
     BOOL shown = finished ? offset + velocity * 0.15 > -width / 2 : !opening;
@@ -2697,16 +2738,7 @@ static void ApolloDuoPostsDragPanned(ApolloDuoSplitHost *host, UIPanGestureRecog
     host.postsDragKind = ApolloDuoPostsDragNone;
     host.postsDragPicture = nil;
     host.postsDragCover = nil;
-    [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionCurveEaseOut
-                     animations:^{ cover.alpha = shown ? 0 : 1; } completion:nil];
-    __weak ApolloDuoSplitHost *weakHost = host;
-    ApolloDuoSlideDrawer(picture, offset, shown ? 0 : -width, finished ? velocity : 0, YES, ^{
-        ApolloDuoSplitHost *strongHost = weakHost;
-        ApolloDuoPostsLandColumnPicture(strongHost, picture);
-        [cover removeFromSuperview];
-        // Offscreen already, so the real column closes with no second movement.
-        if (!shown && strongHost) ApolloDuoPostsSetOverlayAnimated(ApolloDuoSplitStateForNavigation(strongHost.postsNavigation, NO), NO, NO);
-    });
+    ApolloDuoPostsLandPicture(host, picture, cover, offset, shown, finished ? velocity : 0);
 }
 
 // Dragging the line between Posts and the thread. Apollo's rows measure text in
@@ -4280,6 +4312,7 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
             BOOL fromOverlay = state.host.postsOverlayVisible;
             ApolloDuoPostsSetDetail(state, page, animated && !fromOverlay);
             if (fromOverlay) ApolloDuoPostsSetOverlay(state, NO);
+            else if (state.host.listVisible) [state.host setListVisible:NO animated:animated];
         } else return NO;
         ApolloDuoPostsSyncColumns(state);
         return YES;
