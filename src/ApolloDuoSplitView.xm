@@ -2282,7 +2282,6 @@ static void ApolloDuoPostsCommitTables(ApolloDuoSplitState *state) {
 
 static void ApolloDuoPostsChangeColumns(ApolloDuoSplitState *state, BOOL animate, BOOL separateFirst,
                                         void (^flag)(void), void (^afterColumns)(void)) {
-    UIView *surface = state.host.view;
     ApolloDuoPostsStopGeometry(state.feed.viewIfLoaded);
     ApolloDuoPostsStopGeometry(state.secondary.viewIfLoaded);
     [state.host.postsTransitionSnapshot removeFromSuperview];
