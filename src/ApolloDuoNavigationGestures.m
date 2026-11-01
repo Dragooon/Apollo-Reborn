@@ -57,7 +57,8 @@ static BOOL ApolloDuoBackSwipeAcceptsPoint(UINavigationController *navigation, C
         && ApolloDuoBackSwipeAcceptsPoint(self.navigation, [touch locationInView:self.navigation.view]);
 }
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
-    return gesture == self.swipe && ApolloDuoBackSwipeCanNavigate(self.navigation);
+    return gesture == self.swipe && ApolloDuoBackSwipeCanNavigate(self.navigation)
+        && !ApolloDuoSplitSidebarDragOwns(self.navigation);
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture
         shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {

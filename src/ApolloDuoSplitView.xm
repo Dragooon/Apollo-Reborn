@@ -32,6 +32,7 @@ static UITableView *ApolloDuoSplitFindTable(UIView *view);
 static void ApolloDuoPostsStopGeometry(UIView *feed);
 @class ApolloDuoSplitHost;
 static void ApolloDuoPostsRememberColumnWidth(ApolloDuoSplitHost *host);
+static void ApolloDuoSidebarDragAttachHide(UIView *surface, ApolloDuoSplitHost *host, BOOL overlay);
 static void ApolloDuoToggleFeedLayout(ApolloDuoSplitHost *host);
 static void ApolloDuoToggleVisibleFeedLayout(UIViewController *controller, BOOL enabled);
 static NSUInteger ApolloDuoFeedStackKeptCount(UINavigationController *feed);
@@ -46,9 +47,12 @@ static const CGFloat kApolloDuoPostsColumnDefaultWidth = 390.0;
 static const CGFloat kApolloDuoPostsColumnMinimumWidth = 320.0;
 static NSString *const kApolloDuoPostsColumnWidthKey = @"ApolloDuoPostsColumnWidth";
 static CGFloat sApolloDuoPostsChosenColumnWidth;
-// The subreddit drawer sits over the Posts column and leaves part of it showing,
-// like Mail's Mailboxes over its list. 320pt is the narrowest iPhone Apollo runs on.
-static const CGFloat kApolloDuoSubredditDrawerWidth = 320.0;
+// The subreddit panel floats by default. Its Sidebar style sits flush over the Posts
+// column and leaves part of it showing, like Mail's Mailboxes over its list; 320pt
+// is the narrowest iPhone Apollo runs on.
+static CGFloat ApolloDuoSubredditDrawerWidth(CGFloat canvasWidth) {
+    return MIN(sDuoSubredditPanelSidebarEnabled ? 320.0 : 360.0, canvasWidth - 96);
+}
 
 // Landscape keeps the thread tiled beside Posts with its action row clear of the
 // rail: 84pt rail + 260pt of actions. Portrait's overlay leaves the thread its width.
@@ -266,12 +270,18 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
 }
 
 @interface ApolloDuoSplitHost : UIViewController <UISplitViewControllerDelegate, ApolloDuoLayoutControl>
+- (void)beginListDrag;
+- (void)updateListDragOffset:(CGFloat)offset;
+- (void)finishListDragShown:(BOOL)shown velocity:(CGFloat)velocity;
+- (CGFloat)listHiddenOffset;
 @property(nonatomic, strong) UISplitViewController *split;
 @property(nonatomic, strong) UINavigationController *subredditList;
 @property(nonatomic, weak) UINavigationController *postsNavigation;
 @property(nonatomic, strong) UIView *listContainer;
 @property(nonatomic, strong) UIVisualEffectView *listGlass;
 @property(nonatomic) BOOL listUsesGlass;
+@property(nonatomic) BOOL listUsesSidebar;
+@property(nonatomic, strong) NSLayoutConstraint *listNavigationBarTop;
 @property(nonatomic) BOOL listStyleApplied;
 - (void)updateListAppearance;
 - (void)restoreListSurfaceColors;
@@ -289,6 +299,7 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
 // Back rejoins Apollo's native stack; Posts rewraps once, then, not on every show.
 @property(nonatomic) BOOL postsThreadSeparated;
 @property(nonatomic, strong) UIControl *postsOverlayDismiss;
+@property(nonatomic, strong) UISwipeGestureRecognizer *postsOverlaySwipe;
 @property(nonatomic, strong) UIView *postsColumnDivider;
 @property(nonatomic, strong) UIView *listEdge;
 @property(nonatomic) BOOL postsColumnWidthSaveScheduled;
@@ -356,13 +367,15 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
         self.postsOverlayDismiss = [UIControl new];
         [self.postsOverlayDismiss addTarget:self action:@selector(dismissPostsOverlay) forControlEvents:UIControlEventTouchUpInside];
         self.postsOverlayDismiss.hidden = YES;
-        UISwipeGestureRecognizer *overlaySwipe = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(dismissPostsOverlay)];
-        overlaySwipe.direction = UISwipeGestureRecognizerDirectionLeft;
-        [self.postsOverlayDismiss addGestureRecognizer:overlaySwipe];
+        self.postsOverlaySwipe = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(dismissPostsOverlay)];
+        self.postsOverlaySwipe.direction = UISwipeGestureRecognizerDirectionLeft;
+        [self.postsOverlayDismiss addGestureRecognizer:self.postsOverlaySwipe];
+        ApolloDuoSidebarDragAttachHide(self.postsOverlayDismiss, self, YES);
         [self.view addSubview:self.postsOverlayDismiss];
         self.listDismiss = [UIControl new];
         self.listDismiss.backgroundColor = [UIColor.blackColor colorWithAlphaComponent:0.12];
         [self.listDismiss addTarget:self action:@selector(dismissList) forControlEvents:UIControlEventTouchUpInside];
+        ApolloDuoSidebarDragAttachHide(self.listDismiss, self, NO);
         self.listDismiss.hidden = YES;
         [self.view addSubview:self.listDismiss];
         self.listGlass = [[UIVisualEffectView alloc] initWithEffect:nil];
@@ -374,10 +387,8 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
         [self.view addSubview:self.listContainer];
         self.listGlass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [self.listContainer addSubview:self.listGlass];
-        // Flush with the display's edge at full height, as Mail's Mailboxes
-        // are over its list on this display; a hairline ends it on the other side.
+        // The Sidebar style's line, ending it where it meets the content.
         self.listEdge = [UIView new];
-        self.listEdge.backgroundColor = UIColor.separatorColor;
         [self.listContainer addSubview:self.listEdge];
         // A managed bar joins Duo's global vertical navigation rail even
         // inside this narrow drawer. A standalone native bar keeps Apollo's
@@ -397,8 +408,9 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
         UIView *list = self.subredditList.view;
         list.translatesAutoresizingMaskIntoConstraints = NO;
         [self.listGlass.contentView addSubview:list];
+        self.listNavigationBarTop = [self.listNavigationBar.topAnchor constraintEqualToAnchor:self.listGlass.contentView.topAnchor constant:12];
         [NSLayoutConstraint activateConstraints:@[
-            [self.listNavigationBar.topAnchor constraintEqualToAnchor:self.listGlass.contentView.topAnchor constant:24],
+            self.listNavigationBarTop,
             // UIKit adds 8pt before the native Add platter but places Edit
             // flush with the bar's trailing edge. Both visible platters need
             // the same 20pt inset from the rounded drawer, including Done.
@@ -516,21 +528,48 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
 }
 - (void)updateListAppearance {
     if (!self.subredditList || !self.listGlass) return;
-    BOOL changed = !self.listStyleApplied || self.listUsesGlass != sDuoSubredditPanelGlassEnabled;
+    // Sidebar's rows sit on a material too, so it uses the glass style's surfaces.
+    BOOL translucent = sDuoSubredditPanelGlassEnabled || sDuoSubredditPanelSidebarEnabled;
+    BOOL changed = !self.listStyleApplied || self.listUsesGlass != translucent
+        || self.listUsesSidebar != sDuoSubredditPanelSidebarEnabled;
     BOOL refreshRows = self.listStyleApplied && changed;
-    self.listUsesGlass = sDuoSubredditPanelGlassEnabled;
+    self.listUsesGlass = translucent;
+    self.listUsesSidebar = sDuoSubredditPanelSidebarEnabled;
     if (changed) {
         // Keep the same controller, panel geometry, and native Add/Edit items.
         // Standard restores Apollo's own surfaces instead of clearing them for
         // the material; it does not change the app-wide Liquid Glass setting.
         [self restoreListSurfaceColors];
         UIVisualEffect *effect = nil;
-        // A sidebar material rather than a floating glass platter.
-        if (self.listUsesGlass) effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+        if (self.listUsesSidebar) {
+            // A sidebar material rather than a floating glass platter.
+            effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+        } else if (self.listUsesGlass) {
+            if (@available(iOS 26.0, *)) effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+            else effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+        }
+        // The floating panel's corners sit 12pt inside the display's rounded
+        // corners. Follow them concentrically, as system sheets do, instead of
+        // a fixed radius the display clips. The container resolves against the
+        // window; the material, sharing its bounds, takes the same radius.
+        // Sidebar is flush with the display's edge, as Mail's Mailboxes are.
+        if (@available(iOS 26.0, *)) {
+            UICornerConfiguration *corners = [UICornerConfiguration configurationWithUniformRadius:
+                self.listUsesSidebar ? [UICornerRadius fixedRadius:0]
+                                     : [UICornerRadius containerConcentricRadiusWithMinimum:28]];
+            self.listContainer.cornerConfiguration = corners;
+            self.listGlass.cornerConfiguration = corners;
+        } else {
+            self.listGlass.layer.cornerRadius = self.listUsesSidebar ? 0 : 28;
+            self.listGlass.layer.cornerCurve = kCACornerCurveContinuous;
+        }
+        self.listNavigationBarTop.constant = self.listUsesSidebar ? 24 : 12;
+        self.listEdge.hidden = !self.listUsesSidebar;
+        [self.view setNeedsLayout];
         self.listGlass.effect = effect;
         self.listStyleApplied = YES;
     }
-    NSString *panelTitle = @"Subreddits";
+    NSString *panelTitle = self.listUsesGlass && !self.listUsesSidebar ? @"" : @"Subreddits";
     if (![self.listNavigationBar.topItem.title isEqualToString:panelTitle])
         self.listNavigationBar.topItem.title = panelTitle;
     self.listGlass.backgroundColor = self.listUsesGlass ? UIColor.clearColor
@@ -657,6 +696,35 @@ static void ApolloDuoSlideDrawer(UIView *view, CGFloat from, CGFloat to, CGFloat
         [button.layer addAnimation:reveal forKey:@"ApolloDuoControlsReveal"];
     }
     ApolloLog(@"[DuoSplit] revealing %lu restored feed controls", (unsigned long)buttons.count);
+}
+- (CGFloat)listHiddenOffset { return -self.listGlass.bounds.size.width - 12; }
+// A drag moves the same transform the spring uses, so it can take over from it.
+- (void)beginListDrag {
+    if (!self.listVisible) {
+        [self setListVisible:YES animated:NO];
+        self.listDismiss.alpha = 0;
+        self.listContainer.transform = CGAffineTransformMakeTranslation([self listHiddenOffset], 0);
+    } else {
+        CGFloat current = (self.listContainer.layer.presentationLayer ?: self.listContainer.layer).transform.m41;
+        [self.listContainer.layer removeAnimationForKey:@"ApolloDuoSlide"];
+        self.listContainer.transform = CGAffineTransformMakeTranslation(current, 0);
+    }
+}
+- (void)updateListDragOffset:(CGFloat)offset {
+    CGFloat hidden = [self listHiddenOffset];
+    offset = MIN(0, MAX(hidden, offset));
+    self.listContainer.transform = CGAffineTransformMakeTranslation(offset, 0);
+    self.listDismiss.alpha = hidden < 0 ? 1 - offset / hidden : 1;
+}
+- (void)finishListDragShown:(BOOL)shown velocity:(CGFloat)velocity {
+    if (!shown) {
+        [self setListVisible:NO animated:YES velocity:velocity];
+        return;
+    }
+    CGFloat current = self.listContainer.transform.tx;
+    [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionCurveEaseOut
+                     animations:^{ self.listDismiss.alpha = 1; } completion:nil];
+    ApolloDuoSlideDrawer(self.listContainer, current, 0, velocity, YES, nil);
 }
 - (void)toggleList { [self setListVisible:!self.listVisible animated:YES]; }
 - (void)dismissList { [self setListVisible:NO animated:YES]; }
@@ -869,35 +937,54 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
     [super viewDidLayoutSubviews];
     [self scheduleSplitSafeAreaSync];
     if (self.subredditList) {
-        CGFloat width = MIN(kApolloDuoSubredditDrawerWidth, self.view.bounds.size.width - 96);
+        CGFloat width = ApolloDuoSubredditDrawerWidth(self.view.bounds.size.width);
         BOOL portrait = self.view.bounds.size.width <= self.view.bounds.size.height;
         CGFloat overlayColumn = self.split.primaryColumnWidth;
         self.postsOverlayDismiss.frame = CGRectMake(overlayColumn, 0, MAX(0, self.view.bounds.size.width - overlayColumn), self.view.bounds.size.height);
         self.postsOverlayDismiss.hidden = !self.postsOverlayVisible;
+        if (self.postsOverlaySwipe.enabled == sDuoSidebarsFollowFinger) self.postsOverlaySwipe.enabled = !sDuoSidebarsFollowFinger;
         if (self.splitButtonShowsSidebar != portrait) [self updateSplitButton];
         // The line between Posts and the thread. It lives on the Posts column
         // so it moves with UIKit's separator drag without any layout from here.
         UIView *postsColumn = self.postsNavigation.viewIfLoaded;
         if (postsColumn && !self.postsColumnDivider) {
             self.postsColumnDivider = [UIView new];
-            self.postsColumnDivider.backgroundColor = UIColor.separatorColor;
             self.postsColumnDivider.userInteractionEnabled = NO;
             self.postsColumnDivider.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleHeight;
             [postsColumn addSubview:self.postsColumnDivider];
         }
-        CGFloat dividerWidth = 1.0 / MAX(1.0, self.traitCollection.displayScale);
-        self.postsColumnDivider.frame = CGRectMake(CGRectGetWidth(postsColumn.bounds) - dividerWidth, 0, dividerWidth, CGRectGetHeight(postsColumn.bounds));
+        // A solid point in the theme's own separator color, so a custom theme sets it.
+        UIColor *dividerColor = ApolloThemeSeparatorColor() ?: UIColor.opaqueSeparatorColor;
+        if (![self.postsColumnDivider.backgroundColor isEqual:dividerColor]) self.postsColumnDivider.backgroundColor = dividerColor;
+        self.postsColumnDivider.frame = CGRectMake(CGRectGetWidth(postsColumn.bounds) - 1.0, 0, 1.0, CGRectGetHeight(postsColumn.bounds));
         self.postsColumnDivider.hidden = !self.postsColumnsPaired;
         ApolloDuoPostsRememberColumnWidth(self);
-        // Full height: the list's safe area keeps its rows clear of a bottom tab bar.
-        CGFloat height = self.view.bounds.size.height;
+        CGFloat bottom = CGRectGetMaxY(self.view.bounds) - 12;
+        if (portrait) {
+            // The floating bottom tab bar overlays this full-height host.
+            // Reserve its native layout frame, not the animated glass platter,
+            // so the drawer stays clear without resizing as the bar minimizes.
+            bottom -= self.view.safeAreaInsets.bottom;
+            UITabBar *tabBar = self.tabBarController.tabBar;
+            if (tabBar.window && tabBar.window == self.view.window) {
+                CGRect barFrame = [tabBar convertRect:tabBar.bounds toView:self.view];
+                if (!CGRectIsEmpty(barFrame) && CGRectGetWidth(barFrame) > CGRectGetHeight(barFrame)
+                    && CGRectGetMidY(barFrame) > CGRectGetMidY(self.view.bounds)) {
+                    bottom = MIN(bottom, CGRectGetMinY(barFrame) - 12);
+                }
+            }
+        }
+        // Sidebar runs full height: the list's safe area keeps its rows clear of a bottom tab bar.
+        CGFloat height = self.listUsesSidebar ? self.view.bounds.size.height : MAX(0, bottom - 12);
         self.listDismiss.frame = self.view.bounds;
         // Bounds/center stay independent of the presentation transform.
         self.listContainer.bounds = CGRectMake(0, 0, width, height);
-        self.listContainer.center = CGPointMake(width / 2, height / 2);
+        CGFloat listInset = self.listUsesSidebar ? 0 : 12;
+        self.listContainer.center = CGPointMake(listInset + width / 2, listInset + height / 2);
         self.listGlass.frame = self.listContainer.bounds;
-        CGFloat listEdgeWidth = 1.0 / MAX(1.0, self.traitCollection.displayScale);
-        self.listEdge.frame = CGRectMake(width - listEdgeWidth, 0, listEdgeWidth, height);
+        UIColor *listEdgeColor = ApolloThemeSeparatorColor() ?: UIColor.opaqueSeparatorColor;
+        if (![self.listEdge.backgroundColor isEqual:listEdgeColor]) self.listEdge.backgroundColor = listEdgeColor;
+        self.listEdge.frame = CGRectMake(width - 1.0, 0, 1.0, height);
         // The drawer covers/intercepts its underlying controls. Keep the
         // navigation items installed so opening it never reflows the bar.
         self.listButton.hidden = NO;
@@ -995,6 +1082,7 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
 @property(nonatomic) BOOL selectingAccountShortcut;
 @property(nonatomic) BOOL changing;
 @property(nonatomic) BOOL postsTogglingSplit;
+@property(nonatomic, weak) UIView *postsColumnDragView;
 @property(nonatomic) BOOL navigationBarWasHidden;
 @property(nonatomic) BOOL needsDefault;
 @property(nonatomic) BOOL halfWidthSidebar;
@@ -1100,7 +1188,7 @@ CGFloat ApolloDuoSplitTransitionContentWidth(UIView *view, CGFloat trailingInset
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(owner.navigationController, NO);
     CGFloat width = sDuoSplitTargetSize.width;
     if (state.feed && state.split && MIN(sDuoSplitTargetSize.width, sDuoSplitTargetSize.height) >= 600) {
-        if (owner.navigationController == state.primary) return MIN(kApolloDuoSubredditDrawerWidth, width - 96);
+        if (owner.navigationController == state.primary) return ApolloDuoSubredditDrawerWidth(width);
         BOOL landscape = sDuoSplitTargetSize.width > sDuoSplitTargetSize.height;
         BOOL paired = state.host.postsSplitEnabled && landscape && (state.secondary.viewControllers.count > 1 || state.feed.viewControllers.count > 1);
         CGFloat column = ApolloDuoPostsColumnWidth(width, landscape && state.halfWidthSidebar);
@@ -1148,15 +1236,11 @@ BOOL ApolloDuoSplitAllowsNavigationSwipe(UINavigationController *nav) {
     return !state.host.listVisible && (nav == state.feed || nav == state.secondary);
 }
 
+static BOOL ApolloDuoPostsOverlayCanReveal(ApolloDuoSplitState *state, UINavigationController *nav);
+
 BOOL ApolloDuoSplitRevealPostsOverlay(UINavigationController *nav) {
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
-    if (!state.split || !state.feed || state.changing || state.host.postsOverlayVisible
-        || state.host.listVisible || state.host.view.bounds.size.width > state.host.view.bounds.size.height) return NO;
-    // A deeper page still goes Back first, one level at a time.
-    BOOL separated = state.host.postsThreadSeparated;
-    if (nav != (separated ? state.secondary : state.feed)
-        || nav.viewControllers.count != (separated ? 2 : ApolloDuoFeedStackKeptCount(nav) + 1)) return NO;
-    if (![nav.topViewController isKindOfClass:ApolloClassCommentsViewController]) return NO;
+    if (!ApolloDuoPostsOverlayCanReveal(state, nav)) return NO;
     state.host.setPostsOverlay(YES);
     return YES;
 }
@@ -1521,6 +1605,11 @@ static void ApolloDuoPostsSyncColumnsWithAnimation(ApolloDuoSplitState *state, B
     // Only a real split (or its width-toggle preparation) needs two stacks.
     // Never migrate a page while Apollo's native push/pop owns its transition.
     if (ApolloDuoPostsHasLandscapeColumns(state)) state.host.postsThreadSeparated = NO;
+    // A drag moves the Posts column by hand. Nothing may outlive the overlay.
+    if (!state.host.postsOverlayVisible) {
+        state.postsColumnDragView.transform = CGAffineTransformIdentity;
+        state.postsColumnDragView = nil;
+    }
     BOOL separateComments = ApolloDuoPostsUsesSplit(state) || state.postsTogglingSplit || state.host.postsThreadSeparated;
     NSUInteger feedKept = ApolloDuoFeedStackKeptCount(state.feed);
     if (separateComments && state.feed.viewControllers.count > feedKept && !state.feed.transitionCoordinator) {
@@ -2122,14 +2211,14 @@ static void ApolloDuoRestoreFeedAnchor(UITableView *table, ApolloDuoFeedAnchor *
 // the subreddit drawer a further level above it. The thread stays on Apollo's
 // native feed stack until this is asked for, so ordinary pushes keep Apollo's
 // own animator, and it rejoins that stack on Back (ApolloDuoPostsRejoinThread).
-static void ApolloDuoPostsSetOverlay(ApolloDuoSplitState *state, BOOL visible) {
+static void ApolloDuoPostsSetOverlayAnimated(ApolloDuoSplitState *state, BOOL visible, BOOL animated) {
     ApolloDuoSplitHost *host = state.host;
     if (!state.feed || !state.split || state.changing || state.postsTogglingSplit
         || host.postsOverlayVisible == visible || ApolloDuoPostsHasLandscapeColumns(state)
         || state.feed.transitionCoordinator || state.secondary.transitionCoordinator) return;
     if (visible && !host.canShowPostsOverlay) return;
     UIView *surface = host.view;
-    BOOL animate = surface.window && !UIAccessibilityIsReduceMotionEnabled();
+    BOOL animate = animated && surface.window && !UIAccessibilityIsReduceMotionEnabled();
     [surface layoutIfNeeded];
     if (!visible) [host setListVisible:NO animated:animate];
     // Posts rewraps as it narrows. Keep the reader's place in it. Under the
@@ -2148,6 +2237,183 @@ static void ApolloDuoPostsSetOverlay(ApolloDuoSplitState *state, BOOL visible) {
         ApolloDuoRestoreFeedAnchor(table, anchor);
         [table layoutIfNeeded];
     });
+}
+
+static void ApolloDuoPostsSetOverlay(ApolloDuoSplitState *state, BOOL visible) {
+    ApolloDuoPostsSetOverlayAnimated(state, visible, YES);
+}
+
+static BOOL ApolloDuoPostsOverlayCanReveal(ApolloDuoSplitState *state, UINavigationController *nav) {
+    if (!state.split || !state.feed || state.changing || state.host.postsOverlayVisible
+        || state.host.listVisible || state.host.view.bounds.size.width > state.host.view.bounds.size.height) return NO;
+    // A deeper page still goes Back first, one level at a time.
+    BOOL separated = state.host.postsThreadSeparated;
+    if (nav != (separated ? state.secondary : state.feed)
+        || nav.viewControllers.count != (separated ? 2 : ApolloDuoFeedStackKeptCount(nav) + 1)) return NO;
+    return [nav.topViewController isKindOfClass:ApolloClassCommentsViewController];
+}
+
+// UIKit's own column gesture is interactive, but Apollo's Back owns that edge and
+// the column doesn't exist until a thread is separated. So open the column at once,
+// offscreen, and move it with the finger; the release lands it or closes it again.
+// The rewrap this costs happens once per thread, as a touch-down, not per frame.
+typedef NS_ENUM(NSInteger, ApolloDuoSidebarDragKind) {
+    ApolloDuoSidebarDragNone,
+    ApolloDuoSidebarDragDrawer,
+    ApolloDuoSidebarDragOverlay,
+};
+@interface ApolloDuoSidebarDrag : NSObject <UIGestureRecognizerDelegate>
+@property(nonatomic, weak) UINavigationController *navigation; // Opening from a pane's edge.
+@property(nonatomic, weak) ApolloDuoSplitHost *host;           // Closing from what covers the content.
+@property(nonatomic) BOOL hidesOverlay;
+@property(nonatomic) ApolloDuoSidebarDragKind kind;
+@property(nonatomic) CGFloat startOffset;
+@property(nonatomic, weak) UIPanGestureRecognizer *pan;
+@end
+
+static UIView *ApolloDuoPostsColumnView(ApolloDuoSplitState *state) {
+    UIView *splitView = state.split.viewIfLoaded;
+    UIView *view = state.feed.viewIfLoaded;
+    while (view && view.superview && view.superview != splitView) view = view.superview;
+    return view.superview == splitView ? view : nil;
+}
+
+@implementation ApolloDuoSidebarDrag
+- (ApolloDuoSplitState *)state {
+    return ApolloDuoSplitStateForNavigation(self.navigation ?: self.host.postsNavigation, NO);
+}
+- (ApolloDuoSidebarDragKind)availableKind {
+    if (!sDuoSidebarsFollowFinger || !self.state.split || self.state.changing || self.state.postsTogglingSplit) return ApolloDuoSidebarDragNone;
+    if (self.host) {
+        if (self.hidesOverlay) return self.host.postsOverlayVisible && !self.host.listVisible ? ApolloDuoSidebarDragOverlay : ApolloDuoSidebarDragNone;
+        return self.host.listVisible ? ApolloDuoSidebarDragDrawer : ApolloDuoSidebarDragNone;
+    }
+    if (ApolloDuoSplitCanRevealPostsListWithSwipe(self.navigation)) return ApolloDuoSidebarDragDrawer;
+    return ApolloDuoPostsOverlayCanReveal(self.state, self.navigation) ? ApolloDuoSidebarDragOverlay : ApolloDuoSidebarDragNone;
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
+    if (self.availableKind == ApolloDuoSidebarDragNone) return NO;
+    if (self.host) return YES;
+    UINavigationController *navigation = self.navigation;
+    if (!navigation.viewIfLoaded.window || navigation.transitionCoordinator || navigation.presentedViewController
+        || navigation.topViewController.presentedViewController
+        || [NSUserDefaults.standardUserDefaults boolForKey:@"DisableNavigationGestures"]) return NO;
+    // The same strip the pane swipe starts from.
+    CGRect pane = ApolloDuoSplitContentFrame(navigation, navigation.view);
+    if (CGRectIsNull(pane)) pane = navigation.view.bounds;
+    CGPoint point = [touch locationInView:navigation.view];
+    if (!CGRectContainsPoint(pane, point) || point.x > CGRectGetMinX(pane) + 28.0) return NO;
+    return CGRectGetMinX(pane) <= 0.0 || point.x >= CGRectGetMinX(pane) + 12.0;
+}
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
+    if (gesture != self.pan || self.availableKind == ApolloDuoSidebarDragNone) return NO;
+    CGPoint velocity = [self.pan velocityInView:self.pan.view];
+    if (fabs(velocity.x) <= fabs(velocity.y)) return NO;
+    return self.host ? velocity.x < 0 : velocity.x > 0;
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
+    return [other.view isKindOfClass:UIScrollView.class] && other == ((UIScrollView *)other.view).panGestureRecognizer;
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)other {
+    // At the narrow strip the sidebar goes ahead of a row's horizontal actions.
+    BOOL scrollPan = [other.view isKindOfClass:UIScrollView.class] && other == ((UIScrollView *)other.view).panGestureRecognizer;
+    return [other isKindOfClass:UIPanGestureRecognizer.class] && !scrollPan;
+}
+- (void)panned:(UIPanGestureRecognizer *)pan {
+    ApolloDuoSplitState *state = self.state;
+    ApolloDuoSplitHost *host = state.host;
+    UIView *reference = host.view;
+    CGFloat translation = [pan translationInView:reference].x;
+    CGFloat velocity = [pan velocityInView:reference].x;
+    if (pan.state == UIGestureRecognizerStateBegan) {
+        self.kind = self.availableKind;
+        if (self.kind == ApolloDuoSidebarDragDrawer) {
+            [host beginListDrag];
+            self.startOffset = host.listContainer.transform.tx;
+        } else if (self.kind == ApolloDuoSidebarDragOverlay) {
+            if (!host.postsOverlayVisible) ApolloDuoPostsSetOverlayAnimated(state, YES, NO);
+            [host.view layoutIfNeeded];
+            UIView *column = ApolloDuoPostsColumnView(state);
+            if (!host.postsOverlayVisible || !column) {
+                ApolloLog(@"[DuoSplit] Posts drag couldn't take the column; overlay=%d", host.postsOverlayVisible);
+                self.kind = ApolloDuoSidebarDragNone;
+                return;
+            }
+            state.postsColumnDragView = column;
+            self.startOffset = self.hidesOverlay ? 0 : -CGRectGetWidth(column.bounds);
+            column.transform = CGAffineTransformMakeTranslation(self.startOffset, 0);
+        }
+        ApolloLog(@"[DuoSplit] sidebar drag began kind=%ld start=%.0f", (long)self.kind, self.startOffset);
+        return;
+    }
+    if (self.kind == ApolloDuoSidebarDragNone) return;
+    CGFloat offset = self.startOffset + translation;
+    if (self.kind == ApolloDuoSidebarDragDrawer) {
+        if (pan.state == UIGestureRecognizerStateChanged) {
+            [host updateListDragOffset:offset];
+            return;
+        }
+        CGFloat hidden = [host listHiddenOffset];
+        BOOL completed = pan.state == UIGestureRecognizerStateEnded;
+        BOOL shown = completed ? offset + velocity * 0.15 > hidden / 2 : self.startOffset > hidden / 2;
+        [host finishListDragShown:shown velocity:completed ? velocity : 0];
+    } else {
+        UIView *column = state.postsColumnDragView;
+        CGFloat width = CGRectGetWidth(column.bounds);
+        if (pan.state == UIGestureRecognizerStateChanged) {
+            column.transform = CGAffineTransformMakeTranslation(MIN(0, MAX(-width, offset)), 0);
+            return;
+        }
+        BOOL completed = pan.state == UIGestureRecognizerStateEnded;
+        BOOL shown = completed ? offset + velocity * 0.15 > -width / 2 : self.startOffset > -width / 2;
+        NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() || !column ? 0 : 0.28;
+        [UIView animateWithDuration:duration delay:0 usingSpringWithDamping:1 initialSpringVelocity:0
+                            options:UIViewAnimationOptionBeginFromCurrentState animations:^{
+            column.transform = shown ? CGAffineTransformIdentity : CGAffineTransformMakeTranslation(-width, 0);
+        } completion:^(__unused BOOL finished) {
+            if (shown) {
+                [host.view setNeedsLayout];
+                return;
+            }
+            // Offscreen already, so the column goes without a second animation.
+            ApolloDuoPostsSetOverlayAnimated(state, NO, NO);
+        }];
+    }
+    ApolloLog(@"[DuoSplit] sidebar drag ended kind=%ld state=%ld", (long)self.kind, (long)pan.state);
+    self.kind = ApolloDuoSidebarDragNone;
+}
+@end
+
+static char kApolloDuoSidebarDragKey;
+static void ApolloDuoSidebarDragInstall(UIView *view, ApolloDuoSidebarDrag *drag) {
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:drag action:@selector(panned:)];
+    pan.delegate = drag;
+    pan.maximumNumberOfTouches = 1;
+    pan.name = @"ApolloReborn.Duo.SidebarDrag";
+    drag.pan = pan;
+    objc_setAssociatedObject(view, &kApolloDuoSidebarDragKey, drag, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [view addGestureRecognizer:pan];
+}
+
+static void ApolloDuoSidebarDragAttachHide(UIView *surface, ApolloDuoSplitHost *host, BOOL overlay) {
+    ApolloDuoSidebarDrag *drag = [ApolloDuoSidebarDrag new];
+    drag.host = host;
+    drag.hidesOverlay = overlay;
+    ApolloDuoSidebarDragInstall(surface, drag);
+}
+
+static void ApolloDuoSidebarDragAttachReveal(UINavigationController *navigation) {
+    UIView *view = navigation.viewIfLoaded;
+    if (!view || !ApolloDeviceIsDuo() || objc_getAssociatedObject(view, &kApolloDuoSidebarDragKey)) return;
+    ApolloDuoSidebarDrag *drag = [ApolloDuoSidebarDrag new];
+    drag.navigation = navigation;
+    ApolloDuoSidebarDragInstall(view, drag);
+}
+
+BOOL ApolloDuoSplitSidebarDragOwns(UINavigationController *navigation) {
+    if (!sDuoSidebarsFollowFinger) return NO;
+    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(navigation, NO);
+    return ApolloDuoSplitCanRevealPostsListWithSwipe(navigation) || ApolloDuoPostsOverlayCanReveal(state, navigation);
 }
 
 // Put a separated thread back on the feed stack at the same full-width geometry,
@@ -3878,6 +4144,7 @@ static void ApolloDuoInstallListReselectionGuard(Class listClass) {
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
     ApolloDuoInstallBackSwipe((id)self);
+    ApolloDuoSidebarDragAttachReveal((id)self);
     ApolloDuoSplitScheduleUpdate();
 }
 %end
