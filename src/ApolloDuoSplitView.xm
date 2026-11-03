@@ -4201,26 +4201,6 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
             return YES;
         }
     }
-    if (state.split && !state.changing && [state.kind isEqualToString:@"search"]
-        && ApolloClassCommentsViewController && [page isKindOfClass:ApolloClassCommentsViewController]) {
-        UIViewController *paneRoot = state.secondary.viewControllers.firstObject;
-        if (nav == state.secondary && state.secondary.viewControllers.count == 1
-            && ApolloClassPostsViewController && [paneRoot isKindOfClass:ApolloClassPostsViewController]) {
-            ApolloDuoSearchMovePostsToColumn(state, page, animated);
-            return YES;
-        }
-        if (state.searchColumnPosts && nav == state.primary) {
-            // Picking another post from the column changes the thread in place.
-            UIView *surface = state.host.view;
-            CGRect pane = animated && surface.window && !UIAccessibilityIsReduceMotionEnabled()
-                ? ApolloDuoPostsDetailPane(state) : CGRectNull;
-            ApolloDuoPostsCrossfade(state.host, pane, ^{
-                [state.secondary setViewControllers:@[paneRoot, page] animated:NO];
-                [state.secondary.view layoutIfNeeded];
-            });
-            return YES;
-        }
-    }
     if (state.feed && !state.changing) {
         if (ApolloDuoPostsRouteFeedLink(state, nav, page, animated)) return YES;
         if (state.host.postsColumnsPaired && (nav == state.feed || nav == state.outer)) {
@@ -4277,6 +4257,26 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
         } else return NO;
         ApolloDuoPostsSyncColumns(state);
         return YES;
+    }
+    if (state.split && !state.changing && [state.kind isEqualToString:@"search"]
+        && ApolloClassCommentsViewController && [page isKindOfClass:ApolloClassCommentsViewController]) {
+        UIViewController *paneRoot = state.secondary.viewControllers.firstObject;
+        if (nav == state.secondary && state.secondary.viewControllers.count == 1
+            && ApolloClassPostsViewController && [paneRoot isKindOfClass:ApolloClassPostsViewController]) {
+            ApolloDuoSearchMovePostsToColumn(state, page, animated);
+            return YES;
+        }
+        if (state.searchColumnPosts && nav == state.primary) {
+            // Picking another post from the column changes the thread in place.
+            UIView *surface = state.host.view;
+            CGRect pane = animated && surface.window && !UIAccessibilityIsReduceMotionEnabled()
+                ? ApolloDuoPostsDetailPane(state) : CGRectNull;
+            ApolloDuoPostsCrossfade(state.host, pane, ^{
+                [state.secondary setViewControllers:@[paneRoot, page] animated:NO];
+                [state.secondary.view layoutIfNeeded];
+            });
+            return YES;
+        }
     }
     // A feed pushed mid column change bypasses the routes above; it still
     // replaces what a closed thread was closed from.
