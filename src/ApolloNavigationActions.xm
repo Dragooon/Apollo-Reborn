@@ -1337,8 +1337,11 @@ static NSArray<UIBarButtonItem *> *ApolloActionsInboxItems(UINavigationItem *ite
     // On Duo, Inbox's added ellipsis is a disclosure, not an Apollo More menu.
     // It must remain toggleable even when other pages keep their actions
     // expanded. Regular phones follow Collapse Navigation Actions, as on main.
-    return sCollapseNavigationActions || (ApolloDeviceIsDuo() &&
-        [NSStringFromClass(self.controller.class) isEqualToString:@"Apollo.InboxViewController"]);
+    if (ApolloDeviceIsDuo() && [NSStringFromClass(self.controller.class) isEqualToString:@"Apollo.InboxViewController"]) return YES;
+    // The collapsed pill expands sideways, which on Duo's vertical rail is a wide empty
+    // blob over the content. The rail has the room, so the actions just stack there.
+    if (ApolloDuoRailHasVisibleSideBar()) return NO;
+    return sCollapseNavigationActions;
 }
 - (instancetype)init {
     self = [super init];

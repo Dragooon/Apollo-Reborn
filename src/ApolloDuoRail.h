@@ -32,6 +32,8 @@ void ApolloDuoRailSync(void);
 /// Mark Apollo's Texture feed tables before a navigation push measures them.
 void ApolloDuoRailPrepareFeedContent(UIViewController *controller);
 CGFloat ApolloDuoRailFeedContentWidth(UITableView *table);
+// How far the rail reaches in from the right edge, with its gap. 0 without a tab bar.
+CGFloat ApolloDuoRailContentRightInset(void);
 
 /// Commit Texture node widths and row heights after a column safe-area change,
 /// retaining the top visible row. No-op when the usable width has not changed.

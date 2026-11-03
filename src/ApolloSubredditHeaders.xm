@@ -655,9 +655,23 @@ static UIImage *ApolloSubredditSizedActionIcon(UIImage *image) {
 - (ApolloIdentityHeaderLayout)apollo_identityForWidth:(CGFloat)width {
     CGRect column = ApolloDuoSplitContentFrame(self.hostViewController, self);
     if (CGRectIsNull(column) && ApolloDuoRailHasVisibleSideBar() && self.hostViewController.view.window) {
-        // UITableView sizes its header to the readable width on the cover.
-        // Identity artwork still centers over the whole screen, including rail.
-        column = [self convertRect:self.hostViewController.view.bounds fromView:self.hostViewController.view];
+        // The banner still runs under the rail, but the name, buttons and description
+        // centre in what the rail leaves: over the whole screen they ran behind it.
+        CGRect screen = [self convertRect:self.hostViewController.view.bounds fromView:self.hostViewController.view];
+        CGFloat clearWidth = MAX(0.0, CGRectGetMaxX(screen) - ApolloDuoRailContentRightInset());
+        CGFloat coverBannerHeight = sSubredditShowBanner ? ApolloSubredditBannerHeight : 0.0;
+        ApolloIdentityHeaderLayout coverLayout = ApolloIdentityHeaderLayoutMakeWithBanner(MIN(width, clearWidth), coverBannerHeight);
+        coverLayout.bannerFrame.origin.x = CGRectGetMinX(screen);
+        coverLayout.bannerFrame.size.width = CGRectGetWidth(screen);
+        if (!sSubredditShowIcon) {
+            CGFloat coverNameY = CGRectGetMaxY(coverLayout.bannerFrame) + 14.0;
+            CGFloat coverShift = coverNameY - CGRectGetMinY(coverLayout.nameFrame);
+            coverLayout.avatarFrame = CGRectZero;
+            coverLayout.nameFrame.origin.y += coverShift;
+            coverLayout.subnameFrame.origin.y += coverShift;
+            coverLayout.bodyY += coverShift;
+        }
+        return coverLayout;
     }
     CGFloat leading = CGRectIsNull(column) ? 0.0 : MAX(0.0, CGRectGetMinX(column));
     CGFloat alignmentWidth = CGRectIsNull(column) ? width : CGRectGetWidth(column);

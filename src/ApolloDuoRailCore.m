@@ -182,6 +182,12 @@ void ApolloDuoRailPrepareFeedContent(UIViewController *controller) {
     }
 }
 
+CGFloat ApolloDuoRailContentRightInset(void) {
+    UITabBarController *tabs = (UITabBarController *)ApolloMainTabBarController();
+    if (![tabs isKindOfClass:UITabBarController.class]) return 0.0;
+    return ApolloDuoClosedContentRightInset(tabs);
+}
+
 CGFloat ApolloDuoRailFeedContentWidth(UITableView *table) {
     if (!NSThread.isMainThread) return 0.0;
     if (![objc_getAssociatedObject(table, &kApolloDuoFeedTableKey) boolValue]) return 0.0;
