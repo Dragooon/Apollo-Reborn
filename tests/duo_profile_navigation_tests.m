@@ -118,6 +118,7 @@ static BOOL sDuoSplitPushingFeedLink;
 static BOOL ApolloDuoSplitIsUnfolded(void) { return unfolded; }
 static NSString *ApolloDuoSplitKind(UIViewController *page) { return page.kind; }
 static BOOL ApolloDuoIsFeedPage(__unused UIViewController *page) { return NO; }
+static BOOL ApolloDuoTripleEnabled(void) { return NO; }
 static void ApolloDuoPostsRejoinThread(__unused ApolloDuoSplitState *state) {}
 static ApolloDuoSplitState *ApolloDuoSplitStateForNavigation(UINavigationController *nav,
                                                           __unused BOOL create) { return nav.duoState; }
