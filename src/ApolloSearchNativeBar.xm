@@ -1067,6 +1067,22 @@ static void NSBUpdateSearchPlacement(UIViewController *vc) {
             stacked |= ApolloDuoCurrentMode() != ApolloDuoModePhone || ApolloDuoRailHasVisibleSideBar();
         }
         NSNumber *original = objc_getAssociatedObject(item, &kNSBDuoSearchPlacementKey);
+        if (@available(iOS 26.0, *)) {
+            // Settings turned this bar off: a search button instead of the field.
+            BOOL barOff = NSBIsNativeSearchCommentsVC(vc) ? !sShowFindInCommentsBar : !sShowFeedSearchBar;
+            if (barOff) {
+                if (!original) {
+                    objc_setAssociatedObject(item, &kNSBDuoSearchPlacementKey, @(item.preferredSearchBarPlacement),
+                                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                }
+                item.searchBarPlacementAllowsExternalIntegration = NO;
+                item.searchBarPlacementAllowsToolbarIntegration = NO;
+                if (item.preferredSearchBarPlacement != UINavigationItemSearchBarPlacementIntegratedButton)
+                    item.preferredSearchBarPlacement = UINavigationItemSearchBarPlacementIntegratedButton;
+                NSBUpdateDuoControls(vc);
+                return;
+            }
+        }
         if (stacked && !original) {
             original = @(item.preferredSearchBarPlacement);
             objc_setAssociatedObject(item, &kNSBDuoSearchPlacementKey, original, OBJC_ASSOCIATION_RETAIN_NONATOMIC);

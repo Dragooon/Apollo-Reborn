@@ -156,6 +156,8 @@ static NSUInteger overlayReveals;
 static BOOL ApolloDuoSplitCanRevealPostsOverlay(__unused UINavigationController *nav) { return overlayAccepts; }
 static BOOL threadOpensPanel;
 static BOOL ApolloDuoSplitThreadSwipeOpensPanel(__unused UINavigationController *nav) { return threadOpensPanel; }
+static BOOL ApolloDuoSplitTripleCanRevealLevel(__unused UINavigationController *nav) { return NO; }
+static BOOL ApolloDuoSplitTripleRevealLevel(__unused UINavigationController *nav) { return NO; }
 static BOOL overlayCanDrag;
 static BOOL ApolloDuoSplitCanDragPostsOverlay(__unused UINavigationController *nav) { return overlayCanDrag; }
 static BOOL ApolloDuoSplitRevealPostsOverlay(__unused UINavigationController *nav) {
