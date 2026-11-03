@@ -6,14 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
-- Show Reddit's **For You** feed on **Home** for **API-Key-Free** accounts, with recommended posts mixed in, at the Best and Hot sorts
-  - Switch back with **Show Subscriptions** in Home's ••• menu, or **For You on Home** in Apollo Reborn settings
-  - If the feed can't load, Home shows your subscriptions
 - iPhone Duo: Posts and comments are laid out more like Mail when open
   - In landscape Posts is about an iPhone wide and comments get the rest, with a line between them; drag it to change the width, which is remembered. The columns lay out once when you let go, so rows no longer stretch while dragging. A right swipe brings in your subreddits beside Posts instead of closing the thread. Folded like a book they still meet at the fold
   - Add a **Sidebar** choice to **Subreddit Panel Style**: flush to the edge at full height, as Mail's Mailboxes are, instead of floating
   - In portrait, swipe right on a post's comments (or tap the sidebar button) to show Posts over them, and swipe right again to bring your subreddits in beside Posts, pushing it over as Mail does. Both follow your finger. Back stays in the navigation bar
-  - Picking a post changes the thread in place instead of sliding across the screen
+  - Picking a post or a subreddit, and following a subreddit link, change the panes in place instead of sliding across the screen
+  - A subreddit opened from Search moves into the sidebar when you open a post, as Posts does everywhere else
+  - On the side rail, navigation actions stack instead of opening a sideways pill, and subreddit headers keep their text clear of the rail
   - Back to an earlier page follows your finger, using Apollo's own gesture, and the subreddit panel follows it from the feed. Gestures > Disable Left Swipes still decides whether a swipe can start anywhere or only at the edge
 
 ## [v4.0.1] - 2026-10-30

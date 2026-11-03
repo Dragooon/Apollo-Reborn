@@ -176,6 +176,8 @@ ApolloReborn_FILES = \
     $(SRC_DIR)/ApolloLinkedAlbumPostControls.xm \
     $(SRC_DIR)/ApolloFeedAlbumMenus.xm \
     $(SRC_DIR)/ApolloGalleryMenu.xm \
+    $(SRC_DIR)/ApolloForYouFeedModel.m \
+    $(SRC_DIR)/ApolloForYouFeed.xm \
     $(SRC_DIR)/ApolloGalleryOrientation.xm \
     $(SRC_DIR)/ApolloBannedProfile.xm \
     $(SRC_DIR)/ApolloImageUploadHost.xm \
@@ -395,8 +397,6 @@ ApolloReborn_FILES = \
     $(SRC_DIR)/ApolloWebJSON.m \
     $(SRC_DIR)/ApolloReduceRateLimiting.m \
     $(SRC_DIR)/ApolloWebJSONWriteRepair.m \
-    $(SRC_DIR)/ApolloForYouFeed.m \
-    $(SRC_DIR)/ApolloForYouMenu.xm \
     $(SRC_DIR)/ApolloWebJSONRoutes.m \
     $(SRC_DIR)/ApolloWebJSONRouteUpdates.m \
     $(SRC_DIR)/ApolloWebJSONIdentity.xm \

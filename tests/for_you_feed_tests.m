@@ -1,128 +1,123 @@
-// Host-side regression harness for src/ApolloForYouFeed.m. The HTML fixtures keep
-// the attribute order Reddit sent on 2026-10-31.
+// Host tests for src/ApolloForYouFeedModel.m (tests/run_for_you_feed_tests.sh).
+// The HTML below is synthetic: it copies the attribute layout of Reddit's
+// interest-home-feed fragment (captured 2026-11-01) with made-up values.
 #import <Foundation/Foundation.h>
-#import "ApolloForYouFeed.h"
+#import "ApolloForYouFeedModel.h"
 
-static int gFailures = 0;
+static int sFailures = 0;
+#define CHECK(cond, ...) do { if (!(cond)) { sFailures++; fprintf(stderr, "FAIL %s:%d: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
 
-#define CHECK(condition, ...) do { \
-    if (!(condition)) { \
-        gFailures++; \
-        NSLog(@"FAILED line %d: %@", __LINE__, [NSString stringWithFormat:__VA_ARGS__]); \
-    } \
-} while (0)
-
-static NSData *UTF8(NSString *text) { return [text dataUsingEncoding:NSUTF8StringEncoding]; }
-
-static NSDictionary *Child(NSString *fullname, BOOL hidden) {
-    return @{ @"kind": @"t3", @"data": @{ @"name": fullname, @"hidden": @(hidden), @"title": fullname } };
+static NSString *Post(NSString *fullname, NSString *extra) {
+    return [NSString stringWithFormat:
+        @"<article><shreddit-post data-ks-item=\"\" class=\"block relative\" permalink=\"/r/x/comments/%@/t/\" "
+        @"content-href=\"https://i.redd.it/a.jpeg\" comment-count=\"5\" user-id=\"t2_viewer\" "
+        @"created-timestamp=\"2026-11-01T20:19:28.635000+0000\" domain=\"i.redd.it\" id=\"%@\" "
+        @"post-title=\"A &gt; B\" post-type=\"image\" subreddit-id=\"t5_sub\" author-id=\"t2_author\" user-logged-in=\"\" %@>"
+        @"<shreddit-post-flair></shreddit-post-flair><shreddit-post-overflow-menu></shreddit-post-overflow-menu>"
+        @"</shreddit-post></article>",
+        [fullname substringFromIndex:3], fullname, extra ?: @""];
 }
 
-static NSData *InfoJSON(NSArray *children, NSString *modhash) {
-    NSDictionary *root = @{ @"kind": @"Listing",
-                            @"data": @{ @"modhash": modhash, @"children": children, @"after": [NSNull null], @"before": [NSNull null] } };
-    return [NSJSONSerialization dataWithJSONObject:root options:0 error:NULL];
+static void TestParse(void) {
+    NSMutableString *html = [NSMutableString string];
+    [html appendString:Post(@"t3_aaa111", nil)];
+    [html appendString:@"<shreddit-ad-post id=\"t3_adpost1\" promoted></shreddit-ad-post>"];
+    [html appendString:Post(@"t3_bbb222", @"recommendation-source=\"comments_on_subreddits\"")];
+    [html appendString:Post(@"t3_aaa111", nil)]; // duplicate
+    [html appendString:Post(@"t3_ccc333", @"promoted")];
+    [html appendString:Post(@"t3_ddd444", @"is-subscribed")];
+    [html appendString:@"<shreddit-player post-id=\"t3_zzz999\"></shreddit-player>"];
+    [html appendString:@"<faceplate-partial src=\"/svc/shreddit/feeds/interest-home-feed?after=dDNfZGRkNDQ0&amp;feed=for-you\"></faceplate-partial>"];
+
+    NSArray *ids = ApolloForYouFeedParsePostIDs(html);
+    NSArray *expected = @[ @"t3_aaa111", @"t3_bbb222", @"t3_ddd444" ];
+    CHECK([ids isEqualToArray:expected], "parsed %s", ids.description.UTF8String);
+    CHECK(ApolloForYouFeedHTMLHasNextPage(html), "next page link not found");
+    CHECK(!ApolloForYouFeedHTMLHasNextPage(Post(@"t3_aaa111", nil)), "next page found where none");
+    CHECK(ApolloForYouFeedParsePostIDs(nil).count == 0, "nil html");
+    CHECK(ApolloForYouFeedHTMLIsSignedIn(html), "signed-in render");
+    NSString *signedOut = [Post(@"t3_eee555", nil) stringByReplacingOccurrencesOfString:@" user-logged-in=\"\"" withString:@""];
+    CHECK(!ApolloForYouFeedHTMLIsSignedIn(signedOut), "signed-out render");
+    CHECK(ApolloForYouFeedHTMLIsSignedIn(@"<div></div>"), "no posts");
+    CHECK(ApolloForYouFeedParsePostIDs(@"<html>login</html>").count == 0, "login page");
 }
 
-static NSArray *ChildNames(NSDictionary *listing) {
-    return [listing valueForKeyPath:@"data.children.data.name"];
+static void TestURL(void) {
+    NSURL *first = ApolloForYouFeedPageURL(@"for-you", nil);
+    CHECK([first.absoluteString isEqualToString:
+           @"https://www.reddit.com/svc/shreddit/feeds/interest-home-feed?feed=for-you&render-mode=partial"],
+          "first %s", first.absoluteString.UTF8String);
+    // base64("t3_1xka3ey") = "dDNfMXhrYTNleQ==" — the value the website sent.
+    NSURL *next = ApolloForYouFeedPageURL(@"for-you", @"t3_1xka3ey");
+    CHECK([next.absoluteString isEqualToString:
+           @"https://www.reddit.com/svc/shreddit/feeds/interest-home-feed?after=dDNfMXhrYTNleQ%3D%3D&feed=for-you&render-mode=partial"],
+          "next %s", next.absoluteString.UTF8String);
+    CHECK(ApolloForYouFeedPageURL(@"", nil) == nil, "empty feed");
 }
 
-static void TestHomeSort(void) {
-    NSDictionary<NSString *, NSString *> *sorts = @{
-        @"best.json": @"best", @"/best.json": @"best", @"hot": @"hot", @"/HOT.json?limit=25": @"hot",
-        @".json": @"", @"/": @"", @"": @"", @"/.json": @"",
-        @"new.json": @"new", @"top.json": @"top", @"rising": @"rising", @"controversial.json": @"controversial",
-    };
-    for (NSString *path in sorts) {
-        CHECK([ApolloForYouFeedHomeSortFromPath(path) isEqualToString:sorts[path]], @"%@ -> %@", path, ApolloForYouFeedHomeSortFromPath(path));
+static void TestHeaders(void) {
+    NSDictionary *headers = @{ @"X-Ratelimit-Remaining": @"1978.0", @"x-ratelimit-reset": @"353" };
+    CHECK(ApolloForYouFeedRateLimitRemaining(headers) == 1978.0, "remaining");
+    CHECK(ApolloForYouFeedRateLimitReset(headers) == 353.0, "reset");
+    CHECK(ApolloForYouFeedRateLimitRemaining(@{}) == -1, "missing");
+    CHECK(ApolloForYouFeedRateLimitRemaining(@{ @"x-ratelimit-remaining": @"" }) == -1, "empty");
+}
+
+static NSDictionary *Child(NSString *name, BOOL hidden) {
+    return @{ @"kind": @"t3", @"data": @{ @"name": name, @"hidden": @(hidden), @"title": name } };
+}
+
+static void TestChildren(void) {
+    NSDictionary *response = @{ @"kind": @"Listing", @"data": @{ @"children": @[
+        Child(@"t3_c", NO), Child(@"t3_a", NO), Child(@"t3_b", YES),
+        @{ @"kind": @"t1", @"data": @{ @"name": @"t1_x" } },
+    ] } };
+    NSArray *ordered = ApolloForYouFeedOrderedChildren(response, @[ @"t3_a", @"t3_b", @"t3_missing", @"t3_c" ]);
+    NSArray *names = [ordered valueForKeyPath:@"data.name"];
+    CHECK([names isEqualToArray:(@[ @"t3_a", @"t3_c" ])], "ordered %s", names.description.UTF8String);
+    NSArray *fromArray = ApolloForYouFeedOrderedChildren(@[ @{}, response ], @[ @"t3_c" ]);
+    CHECK(fromArray.count == 1, "array-wrapped response");
+    CHECK(ApolloForYouFeedOrderedChildren(@"junk", @[ @"t3_a" ]).count == 0, "junk response");
+
+    NSDictionary *listing = ApolloForYouFeedListing(ordered, @"foryou:s:2");
+    CHECK([listing[@"data"][@"after"] isEqual:@"foryou:s:2"], "after");
+    CHECK([ApolloForYouFeedListing(@[], nil)[@"data"][@"after"] isEqual:[NSNull null]], "no after");
+}
+
+static void TestTokens(void) {
+    NSString *token = ApolloForYouFeedToken(@"ABC-123", 50);
+    NSString *session = nil;
+    NSUInteger index = 0;
+    CHECK(ApolloForYouFeedParseToken(token, &session, &index), "parse");
+    CHECK([session isEqualToString:@"ABC-123"] && index == 50, "round trip %s %lu", session.UTF8String, (unsigned long)index);
+    CHECK(!ApolloForYouFeedParseToken(@"t3_abc", NULL, NULL), "reddit cursor");
+    CHECK(!ApolloForYouFeedParseToken(@"foryou:abc", NULL, NULL), "no index");
+    CHECK(!ApolloForYouFeedParseToken(@"foryou:abc:1x", NULL, NULL), "bad index");
+    CHECK(!ApolloForYouFeedParseToken(nil, NULL, NULL), "nil");
+}
+
+static void TestHomePaths(void) {
+    for (NSString *path in @[ @"best.json", @"hot.json", @"/new.json", @"TOP.json", @"controversial.json", @"rising.json" ]) {
+        CHECK(ApolloForYouFeedIsHomeListingPath(path), "home %s", path.UTF8String);
     }
-    for (NSString *path in @[ @"r/apple/best.json", @"/r/all/hot", @"r/Popular/best.json", @"user/x/submitted.json",
-                              @"subreddits/mine/subscriber.json", @"api/info.json", @"comments/abc.json", @"bestest.json" ]) {
-        CHECK(ApolloForYouFeedHomeSortFromPath(path) == nil, @"%@ isn't Home", path);
+    for (NSString *path in @[ @"r/all/best.json", @"r/All/hot.json", @"user/x/submitted.json", @"api/info.json", @"best", @"" ]) {
+        CHECK(!ApolloForYouFeedIsHomeListingPath(path), "not home %s", path.UTF8String);
     }
-    CHECK(ApolloForYouFeedHomeSortFromPath(nil) == nil, @"nil path");
-    for (NSString *sort in @[ @"", @"best", @"hot" ]) CHECK(ApolloForYouFeedSortIsServed(sort), @"serves %@", sort);
-    for (NSString *sort in @[ @"new", @"top", @"rising", @"controversial" ]) CHECK(!ApolloForYouFeedSortIsServed(sort), @"leaves %@", sort);
-    CHECK(!ApolloForYouFeedSortIsServed(nil), @"nil sort");
-}
-
-static void TestPageURL(void) {
-    NSString *first = @"https://www.reddit.com/svc/shreddit/feeds/interest-home-feed?feed=for-you";
-    CHECK([ApolloForYouFeedPageURL(nil).absoluteString isEqualToString:first], @"%@", ApolloForYouFeedPageURL(nil));
-    CHECK([ApolloForYouFeedPageURL(@"").absoluteString isEqualToString:first], @"empty after");
-    // The cursor Reddit's own next link carried for t3_1xjffxx.
-    NSString *next = [first stringByAppendingString:@"&after=dDNfMXhqZmZ4eA%3D%3D"];
-    CHECK([ApolloForYouFeedPageURL(@"t3_1xjffxx").absoluteString isEqualToString:next], @"%@", ApolloForYouFeedPageURL(@"t3_1xjffxx"));
-}
-
-static void TestPostOrder(void) {
-    NSString *html =
-        @"<html><shreddit-ad-post id=\"t3_ad1\" class=\"promotedlink\"></shreddit-ad-post>"
-        @"<shreddit-post data-ks-item class=\"a\" permalink=\"/r/a/comments/one/\" award-id=\"award_free_popcorn_2\" id=\"t3_one\" post-title=\"First\"></shreddit-post>"
-        @"<shreddit-post-overflow-menu id=\"t3_menu\"></shreddit-post-overflow-menu>"
-        @"<shreddit-post\n class=\"b\"\n id=\"t3_two\"\n post-title=\"Second\"></shreddit-post>"
-        @"<shreddit-post class=\"c\" id=\"t3_one\" post-title=\"Repeat\"></shreddit-post>"
-        @"<shreddit-post class=\"d\" post-title=\"No id\"></shreddit-post>"
-        @"<shreddit-post class=\"e\" id=\"t3_three\"></shreddit-post></html>";
-    NSArray *expected = @[ @"t3_one", @"t3_two", @"t3_three" ];
-    NSArray *found = ApolloForYouFeedPostFullnamesFromHTML(UTF8(html));
-    CHECK([found isEqualToArray:expected], @"%@", found);
-    CHECK(ApolloForYouFeedPostFullnamesFromHTML(nil).count == 0, @"nil html");
-    CHECK(ApolloForYouFeedPostFullnamesFromHTML(UTF8(@"<html>Blocked</html>")).count == 0, @"no posts");
-    uint8_t notUTF8[] = { '<', 0xFF, '>' };
-    CHECK(ApolloForYouFeedPostFullnamesFromHTML([NSData dataWithBytes:notUTF8 length:3]).count == 0, @"bad bytes");
-}
-
-static void TestInfoQuery(void) {
-    NSString *query = ApolloForYouFeedInfoQuery(@[ @"t3_a", @"t3_b" ]);
-    CHECK([query isEqualToString:@"id=t3_a,t3_b&limit=100&raw_json=1"], @"%@", query);
-}
-
-static void TestListing(void) {
-    // /api/info answers in its own order; the feed's order wins.
-    NSData *info = InfoJSON(@[ Child(@"t3_c", NO), Child(@"t3_a", NO), Child(@"t3_hidden", YES), Child(@"t3_extra", NO) ], @"hash");
-    NSArray *feed = @[ @"t3_a", @"t3_gone", @"t3_hidden", @"t3_c" ];
-    NSDictionary *listing = ApolloForYouFeedListing(info, feed, @"t3_c");
-    NSArray *expected = @[ @"t3_a", @"t3_c" ];
-    CHECK([ChildNames(listing) isEqualToArray:expected], @"%@", ChildNames(listing));
-    CHECK([listing[@"kind"] isEqual:@"Listing"], @"kind");
-    CHECK([listing[@"data"][@"after"] isEqual:@"t3_c"], @"after");
-    CHECK([listing[@"data"][@"before"] isEqual:[NSNull null]], @"before");
-    CHECK([listing[@"data"][@"modhash"] isEqual:@"hash"], @"modhash");
-    CHECK([listing[@"data"][@"dist"] isEqual:@2], @"dist");
-
-    // The cursor is the feed page's last post even when that post was left out.
-    NSDictionary *lastHidden = ApolloForYouFeedListing(InfoJSON(@[ Child(@"t3_a", NO), Child(@"t3_b", YES) ], @"hash"), @[ @"t3_a", @"t3_b" ], @"t3_b");
-    CHECK([lastHidden[@"data"][@"after"] isEqual:@"t3_b"], @"after past a hidden post");
-    CHECK([ChildNames(lastHidden) isEqualToArray:@[ @"t3_a" ]], @"hidden post left out");
-
-    NSDictionary *allHidden = ApolloForYouFeedListing(InfoJSON(@[ Child(@"t3_a", YES) ], @"hash"), @[ @"t3_a" ], @"t3_a");
-    CHECK([allHidden[@"data"][@"children"] count] == 0 && [allHidden[@"data"][@"after"] isEqual:@"t3_a"], @"an all-hidden page still has a next page");
-
-    NSDictionary *noAfter = ApolloForYouFeedListing(info, feed, nil);
-    CHECK([noAfter[@"data"][@"after"] isEqual:[NSNull null]], @"no after");
-
-    // Not a signed-in listing.
-    CHECK(ApolloForYouFeedListing(InfoJSON(@[ Child(@"t3_a", NO) ], @""), @[ @"t3_a" ], @"t3_a") == nil, @"no modhash");
-    CHECK(ApolloForYouFeedListing(UTF8(@"<html>Blocked</html>"), @[ @"t3_a" ], @"t3_a") == nil, @"block page");
-    CHECK(ApolloForYouFeedListing(UTF8(@"[]"), @[ @"t3_a" ], @"t3_a") == nil, @"array root");
-    CHECK(ApolloForYouFeedListing(UTF8(@"{\"kind\":\"Listing\",\"data\":{\"modhash\":\"hash\"}}"), @[ @"t3_a" ], @"t3_a") == nil, @"no children");
-    CHECK(ApolloForYouFeedListing(nil, @[ @"t3_a" ], @"t3_a") == nil, @"no data");
 }
 
 int main(void) {
     @autoreleasepool {
-        TestHomeSort();
-        TestPageURL();
-        TestPostOrder();
-        TestInfoQuery();
-        TestListing();
+        TestParse();
+        TestURL();
+        TestHeaders();
+        TestChildren();
+        TestTokens();
+        TestHomePaths();
     }
-    if (gFailures > 0) {
-        NSLog(@"for_you_feed_tests: %d check(s) failed", gFailures);
+    if (sFailures) {
+        fprintf(stderr, "%d failure(s)\n", sFailures);
         return 1;
     }
-    printf("for_you_feed_tests: passed\n");
+    printf("for_you_feed_tests: all passed\n");
     return 0;
 }

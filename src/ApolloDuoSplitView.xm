@@ -226,29 +226,6 @@ static UIView *ApolloDuoOverviewTitleView(id node) {
 }
 @end
 
-static void ApolloDuoSlideView(UIView *view, CGFloat from, CGFloat to, NSTimeInterval duration, dispatch_block_t completion) {
-    [view.layer removeAnimationForKey:@"ApolloDuoSlide"];
-    view.transform = CGAffineTransformMakeTranslation(to, 0);
-    if (duration <= 0) {
-        if (completion) completion();
-        return;
-    }
-    CABasicAnimation *slide = [CABasicAnimation animationWithKeyPath:@"transform"];
-    slide.fromValue = [NSValue valueWithCATransform3D:CATransform3DMakeTranslation(from, 0, 0)];
-    slide.toValue = [NSValue valueWithCATransform3D:CATransform3DMakeTranslation(to, 0, 0)];
-    slide.duration = duration;
-    slide.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-    // Tie cleanup to this animation, not UIKit's surrounding transaction.
-    // A disabled-action navigation transaction can finish before the explicit
-    // slide and otherwise hide the drawer at the beginning of dismissal.
-    ApolloDuoSlideCompletion *delegate = [ApolloDuoSlideCompletion new];
-    delegate.completion = completion;
-    delegate.started = CACurrentMediaTime();
-    slide.delegate = delegate;
-    ApolloLog(@"[DuoSplit] slide from=%.1f to=%.1f duration=%.2f", from, to, duration);
-    [view.layer addAnimation:slide forKey:@"ApolloDuoSlide"];
-}
-
 // The subreddit drawer settles on a critically damped spring, so it starts
 // moving at once and can carry a release velocity instead of restarting from
 // rest on an ease-in curve.
@@ -1212,6 +1189,8 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
 @property(nonatomic) BOOL navigationBarWasHidden;
 @property(nonatomic) BOOL needsDefault;
 @property(nonatomic) BOOL halfWidthSidebar;
+// Search with a post open: the subreddit's Posts sits on the column's stack over Search.
+@property(nonatomic, strong) UIViewController *searchColumnPosts;
 @property(nonatomic, weak) id<UIViewControllerTransitionCoordinator> pendingNavigationTransition;
 @property(nonatomic, weak) UIViewController *searchBackPage;
 @property(nonatomic, strong) UIBarButtonItem *searchBackItem;
@@ -1686,7 +1665,8 @@ static void ApolloDuoSplitApplySidebarWidth(ApolloDuoSplitState *state, BOOL hal
     // Bound both ends for Posts so its divider lands exactly where it's meant to.
     // That also keeps UIKit's separator drag off: it relays out Apollo's rows on
     // every frame. Our own strip resizes the column (ApolloDuoPostsResizePanned).
-    CGFloat maximum = state.feed ? postsColumn : (halfWidth ? CGFLOAT_MAX : 420.0);
+    BOOL postsInColumn = state.feed || state.searchColumnPosts;
+    CGFloat maximum = postsInColumn ? postsColumn : (halfWidth ? CGFLOAT_MAX : 420.0);
     if (state.feed) {
         // Portrait layers Posts over the thread (showColumn: picks the mode that
         // fits this behavior); landscape tiles them side by side.
@@ -1698,10 +1678,10 @@ static void ApolloDuoSplitApplySidebarWidth(ApolloDuoSplitState *state, BOOL hal
     // disclosure: a third of the flat inner display (~317pt) cut "Off" to "O".
     // Give that sidebar enough room for the value at the default text size.
     CGFloat sidebarMinimum = [state.kind isEqualToString:@"settings"] ? 340.0 : 240.0;
-    CGFloat minimum = state.feed ? postsColumn : sidebarMinimum;
+    CGFloat minimum = postsInColumn ? postsColumn : sidebarMinimum;
     if (split.maximumPrimaryColumnWidth != maximum) split.maximumPrimaryColumnWidth = maximum;
     if (split.minimumPrimaryColumnWidth != minimum) split.minimumPrimaryColumnWidth = minimum;
-    CGFloat fraction = state.feed ? (canvas.width > 0.0 ? postsColumn / canvas.width : 0.5) : (halfWidth ? 0.5 : 1.0 / 3.0);
+    CGFloat fraction = postsInColumn ? (canvas.width > 0.0 ? postsColumn / canvas.width : 0.5) : (halfWidth ? 0.5 : 1.0 / 3.0);
     if (halfWidth && !state.feed && canvas.width > 0.0) {
         // End the sidebar at the fold itself rather than an assumed midpoint.
         CGRect fold = ApolloDuoActiveVerticalDivision(state.host.view);
@@ -2890,7 +2870,8 @@ static void ApolloDuoPostsCrossfade(ApolloDuoSplitHost *host, CGRect rect, void 
     }
     picture.frame = rect;
     picture.userInteractionEnabled = NO;
-    [surface insertSubview:picture belowSubview:host.listDismiss];
+    if (host.listDismiss) [surface insertSubview:picture belowSubview:host.listDismiss];
+    else [surface addSubview:picture];
     host.postsTransitionSnapshot = picture;
     __weak ApolloDuoSplitHost *weakHost = host;
     [UIView animateWithDuration:0.2 delay:0 options:UIViewAnimationOptionCurveEaseOut
@@ -2930,17 +2911,6 @@ static void ApolloDuoPostsSetDetailPages(ApolloDuoSplitState *state, NSArray<UIV
     }
 
     [surface layoutIfNeeded];
-    NSArray<ApolloDuoPostsGeometry *> *feedGeometry = animate && !entering
-        ? ApolloDuoPostsCaptureGeometry(state.feed.view, surface) : nil;
-    CGRect pane = !entering ? ApolloDuoPostsDetailPane(state) : CGRectNull;
-    UIView *snapshot = !entering && animate && !CGRectIsNull(pane) && !CGRectIsEmpty(pane)
-        ? [surface resizableSnapshotViewFromRect:pane afterScreenUpdates:NO withCapInsets:UIEdgeInsetsZero] : nil;
-    if (snapshot) {
-        snapshot.frame = pane;
-        snapshot.userInteractionEnabled = NO;
-        [surface insertSubview:snapshot belowSubview:state.host.listDismiss];
-        state.host.postsTransitionSnapshot = snapshot;
-    }
     ApolloDuoPostsStopGeometry(state.feed.viewIfLoaded);
     ApolloDuoPostsStopGeometry(state.secondary.viewIfLoaded);
     ApolloDuoFeedAnchor *feedAnchor = ApolloDuoCaptureFeedAnchor(
@@ -2969,35 +2939,9 @@ static void ApolloDuoPostsSetDetailPages(ApolloDuoSplitState *state, NSArray<UIV
             [table layoutIfNeeded];
         }
     };
-    if (!animate) {
-        [UIView performWithoutAnimation:updateColumns];
-        return;
-    }
-    // The first thread beside the feed makes the columns: the feed rewraps to
-    // its column under the same fade as any later thread.
-    if (entering) {
-        ApolloDuoPostsCrossfade(state.host, surface.bounds, updateColumns);
-        return;
-    }
-    // Finish containment with UIKit animation disabled. Running this inside
-    // a UIView animation also animates UIKit's column wrappers, which moves
-    // the whole feed a second time on top of its explicit geometry replay.
-    // Model geometry remains UIKit-owned; only presentation endpoints below
-    // animate from the captured full-width/half-width live view hierarchy.
-    [UIView performWithoutAnimation:updateColumns];
-    __weak ApolloDuoSplitHost *weakHost = state.host;
-    [CATransaction begin];
-    [CATransaction setCompletionBlock:^{ ApolloDuoSplitScheduleUpdate(); }];
-    ApolloDuoPostsAnimateGeometry(feedGeometry, state.feed.view, surface, 0.32);
-    if (snapshot) {
-        CGFloat travel = CGRectGetMaxX(surface.bounds) - CGRectGetMinX(pane);
-        ApolloDuoSlideView(snapshot, 0, travel, 0.32, ^{
-            [snapshot removeFromSuperview];
-            if (weakHost.postsTransitionSnapshot == snapshot) weakHost.postsTransitionSnapshot = nil;
-            ApolloDuoSplitScheduleUpdate();
-        });
-    }
-    [CATransaction commit];
+    // Every change of what the columns hold is one fade in place: the first thread
+    // making the columns, and the last one leaving, the same as any thread between.
+    ApolloDuoPostsCrossfade(state.host, animate ? surface.bounds : CGRectNull, updateColumns);
 }
 
 static void ApolloDuoPostsSetDetail(ApolloDuoSplitState *state, UIViewController *page, BOOL animated) {
@@ -3303,17 +3247,9 @@ static void ApolloDuoSearchReturnToSearch(ApolloDuoSplitState *state) {
     UINavigationController *outer = state.outer;
     UIViewController *search = state.root;
     UIView *surface = outer.view;
-    UIView *detail = state.secondary.view;
-    // The secondary controller can extend beneath the sidebar. Capture only
-    // its visible pane, retaining its navigation chrome and trailing rail.
-    // Top/bottom safe areas describe those controls, not obscured content.
-    CGRect pane = UIEdgeInsetsInsetRect(detail.bounds,
-        UIEdgeInsetsMake(0, detail.safeAreaInsets.left, 0, 0));
-    pane = CGRectIntersection(surface.bounds, [surface convertRect:pane fromView:detail]);
-    BOOL animate = surface.window && !UIAccessibilityIsReduceMotionEnabled()
-        && !CGRectIsNull(pane) && !CGRectIsEmpty(pane);
+    BOOL animate = surface.window && !UIAccessibilityIsReduceMotionEnabled();
     UIView *snapshot = animate
-        ? [surface resizableSnapshotViewFromRect:pane afterScreenUpdates:NO withCapInsets:UIEdgeInsetsZero] : nil;
+        ? [surface resizableSnapshotViewFromRect:surface.bounds afterScreenUpdates:NO withCapInsets:UIEdgeInsetsZero] : nil;
 
     // Commit the real native Back beneath the captured outgoing page. A pop
     // after reparenting cannot animate the old split hierarchy; it otherwise
@@ -3324,15 +3260,14 @@ static void ApolloDuoSearchReturnToSearch(ApolloDuoSplitState *state) {
         [outer popToViewController:search animated:NO];
         [surface layoutIfNeeded];
         if (snapshot) {
-            snapshot.frame = pane;
+            snapshot.frame = surface.bounds;
             snapshot.userInteractionEnabled = NO;
             [surface addSubview:snapshot];
         }
     }];
-    if (snapshot) {
-        CGFloat travel = CGRectGetMaxX(surface.bounds) - CGRectGetMinX(pane);
-        ApolloDuoSlideView(snapshot, 0, travel, 0.32, ^{ [snapshot removeFromSuperview]; });
-    }
+    [UIView animateWithDuration:0.2 delay:0 options:UIViewAnimationOptionCurveEaseOut
+                     animations:^{ snapshot.alpha = 0; }
+                     completion:^(__unused BOOL finished) { [snapshot removeFromSuperview]; }];
     ApolloDuoSplitScheduleUpdate();
 }
 
@@ -3365,6 +3300,62 @@ static void ApolloDuoSearchUpdateBackItem(ApolloDuoSplitState *state) {
     state.searchBackSupplementedNative = page.navigationItem.leftItemsSupplementBackButton;
     page.navigationItem.leftItemsSupplementBackButton = NO;
     page.navigationItem.leftBarButtonItems = [@[back] arrayByAddingObjectsFromArray:page.navigationItem.leftBarButtonItems ?: @[]];
+}
+
+// A subreddit from Search fills the detail pane until a post opens. Then it behaves as
+// the Posts tab does: Posts moves into the column and the thread takes the pane, with
+// Search one level out on the column's stack. Back on the thread moves Posts back.
+static void ApolloDuoSearchSettlePostsMove(ApolloDuoSplitState *state, UIViewController *posts, ApolloDuoFeedAnchor *anchor) {
+    UIView *surface = state.host.view;
+    ApolloDuoSplitApplySidebarWidth(state, state.halfWidthSidebar);
+    [surface setNeedsLayout];
+    [surface layoutIfNeeded];
+    ApolloNativeFeedSearchFinishColumnMove(posts);
+    UITableView *table = ApolloDuoSplitFindTable(posts.viewIfLoaded);
+    SEL commit = NSSelectorFromString(@"waitUntilAllUpdatesAreCommitted");
+    if ([table respondsToSelector:commit]) ((void (*)(id, SEL))objc_msgSend)(table, commit);
+    [table layoutIfNeeded];
+    if (anchor) ApolloDuoRestoreFeedAnchor(table, anchor);
+}
+
+static void ApolloDuoSearchMovePostsToColumn(ApolloDuoSplitState *state, UIViewController *thread, BOOL animated) {
+    UIViewController *posts = state.secondary.viewControllers.firstObject;
+    UIView *surface = state.host.view;
+    [surface layoutIfNeeded];
+    ApolloDuoFeedAnchor *anchor = ApolloDuoCaptureFeedAnchor(ApolloDuoSplitFindTable(posts.viewIfLoaded));
+    BOOL animate = animated && surface.window && !UIAccessibilityIsReduceMotionEnabled();
+    ApolloLog(@"[DuoSplit] Search: Posts moves to the column");
+    ApolloDuoPostsCrossfade(state.host, animate ? surface.bounds : CGRectNull, ^{
+        state.changing = YES;
+        ApolloDuoSearchRestoreBackItem(state);
+        ApolloNativeFeedSearchWillMoveBetweenColumns(posts);
+        [state.secondary setViewControllers:@[[UIViewController new], thread] animated:NO];
+        [state.primary setViewControllers:[state.primary.viewControllers arrayByAddingObject:posts] animated:NO];
+        state.searchColumnPosts = posts;
+        state.changing = NO;
+        ApolloDuoSearchSettlePostsMove(state, posts, anchor);
+    });
+}
+
+static void ApolloDuoSearchMovePostsBack(ApolloDuoSplitState *state, BOOL animated) {
+    UIViewController *posts = state.searchColumnPosts;
+    UIView *surface = state.host.view;
+    [surface layoutIfNeeded];
+    ApolloDuoFeedAnchor *anchor = ApolloDuoCaptureFeedAnchor(ApolloDuoSplitFindTable(posts.viewIfLoaded));
+    BOOL animate = animated && surface.window && !UIAccessibilityIsReduceMotionEnabled();
+    ApolloLog(@"[DuoSplit] Search: Posts moves back to the pane");
+    ApolloDuoPostsCrossfade(state.host, animate ? surface.bounds : CGRectNull, ^{
+        state.changing = YES;
+        ApolloNativeFeedSearchWillMoveBetweenColumns(posts);
+        NSMutableArray<UIViewController *> *column = [state.primary.viewControllers mutableCopy];
+        [column removeObject:posts];
+        [state.primary setViewControllers:column animated:NO];
+        [state.secondary setViewControllers:@[posts] animated:NO];
+        state.searchColumnPosts = nil;
+        state.changing = NO;
+        ApolloDuoSearchUpdateBackItem(state);
+        ApolloDuoSearchSettlePostsMove(state, posts, anchor);
+    });
 }
 
 static void ApolloDuoAccountPrepareHost(ApolloDuoSplitState *state, ApolloDuoSplitHost *host) {
@@ -3774,6 +3765,13 @@ static void ApolloDuoResumeVideosAfterMove(NSArray<UIViewController *> *controll
 
 static void ApolloDuoSplitClose(ApolloDuoSplitState *state, BOOL preserveDetail) {
     [sDuoSplitDeferredPresentations removeObject:state];
+    if (state.searchColumnPosts && state.split && !state.changing) {
+        // Keep the open thread: a close that preserves detail restores it on top of Posts.
+        NSArray<UIViewController *> *pages = state.secondary.viewControllers;
+        NSArray<UIViewController *> *thread = pages.count > 1 ? [pages subarrayWithRange:NSMakeRange(1, pages.count - 1)] : @[];
+        ApolloDuoSearchMovePostsBack(state, NO);
+        [state.secondary setViewControllers:[state.secondary.viewControllers arrayByAddingObjectsFromArray:thread] animated:NO];
+    }
     // Even a close that bails (mid column change, or no split left) lets the
     // closed thread's pages go.
     ApolloDuoPostsForgetClosedThread(state, @"the split closed");
@@ -4060,57 +4058,21 @@ static BOOL ApolloDuoPostsRouteFeedLink(ApolloDuoSplitState *state, UINavigation
     BOOL animate = animated && !UIAccessibilityIsReduceMotionEnabled();
     state.needsDefault = NO;
     UIView *surface = state.host.view;
-    // One coordinated animation: snapshot both panes, settle the final
-    // layout underneath (thread closed, feed pushed) without animation, then
-    // slide the thread out to the right and fade the old feed out while the
-    // new feed fades in at full width. Running a native push alongside the
-    // column animation instead flung retained surfaces across the screen.
-    UIView *feedSnapshot = nil, *threadSnapshot = nil;
-    if (animate && surface.window) {
-        [surface layoutIfNeeded];
-        CGRect pane = ApolloDuoPostsDetailPane(state);
-        if (!CGRectIsNull(pane) && !CGRectIsEmpty(pane)) {
-            CGRect feedRect = CGRectMake(0, 0, CGRectGetMinX(pane), CGRectGetHeight(surface.bounds));
-            feedSnapshot = [surface resizableSnapshotViewFromRect:feedRect afterScreenUpdates:NO withCapInsets:UIEdgeInsetsZero];
-            feedSnapshot.frame = feedRect;
-            threadSnapshot = [surface resizableSnapshotViewFromRect:pane afterScreenUpdates:NO withCapInsets:UIEdgeInsetsZero];
-            threadSnapshot.frame = pane;
-        }
-    }
-    // Close the thread first: an unpaired feed keeps its own bar actions,
-    // which the split would otherwise discard while the page is pushed.
-    UIViewController *backstop = state.secondary.viewControllers.firstObject;
-    [state.secondary setViewControllers:backstop ? @[backstop] : @[] animated:NO];
-    ApolloDuoPostsSyncColumns(state);
-    objc_setAssociatedObject(page, &kDuoFeedLinkPage, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    sDuoSplitPushingFeedLink = YES;
-    [state.feed pushViewController:page animated:NO];
-    sDuoSplitPushingFeedLink = NO;
+    // One fade in place. This used to slide the thread right while the new feed slid
+    // in from the middle, which read as two swipes.
     [surface layoutIfNeeded];
-    if (feedSnapshot && threadSnapshot) {
-        for (UIView *snapshot in @[feedSnapshot, threadSnapshot]) {
-            snapshot.userInteractionEnabled = NO;
-            [surface addSubview:snapshot];
-        }
-        UIView *incoming = state.feed.view;
-        incoming.alpha = 0.0;
-        incoming.transform = CGAffineTransformMakeTranslation(48.0, 0.0);
-        CGFloat travel = CGRectGetMaxX(surface.bounds) - CGRectGetMinX(threadSnapshot.frame);
-        [UIView animateWithDuration:0.42 delay:0 usingSpringWithDamping:1.0 initialSpringVelocity:0
-                            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
-                         animations:^{
-            threadSnapshot.transform = CGAffineTransformMakeTranslation(travel, 0.0);
-            feedSnapshot.transform = CGAffineTransformMakeTranslation(-48.0, 0.0);
-            feedSnapshot.alpha = 0.0;
-            incoming.alpha = 1.0;
-            incoming.transform = CGAffineTransformIdentity;
-        } completion:^(__unused BOOL finished) {
-            [feedSnapshot removeFromSuperview];
-            [threadSnapshot removeFromSuperview];
-            incoming.alpha = 1.0;
-            incoming.transform = CGAffineTransformIdentity;
-        }];
-    }
+    ApolloDuoPostsCrossfade(state.host, animate && surface.window ? surface.bounds : CGRectNull, ^{
+        // Close the thread first: an unpaired feed keeps its own bar actions,
+        // which the split would otherwise discard while the page is pushed.
+        UIViewController *backstop = state.secondary.viewControllers.firstObject;
+        [state.secondary setViewControllers:backstop ? @[backstop] : @[] animated:NO];
+        ApolloDuoPostsSyncColumns(state);
+        objc_setAssociatedObject(page, &kDuoFeedLinkPage, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        sDuoSplitPushingFeedLink = YES;
+        [state.feed pushViewController:page animated:NO];
+        sDuoSplitPushingFeedLink = NO;
+        [surface layoutIfNeeded];
+    });
     if (detail.count && visibleFeed && [state.feed.viewControllers containsObject:page]) {
         // Recorded after the push, so re-shows during it never count as Back.
         ApolloDuoFeedLinkReturn *ret = [ApolloDuoFeedLinkReturn new];
@@ -4174,46 +4136,18 @@ static UIViewController *ApolloDuoPostsPopFeedLink(ApolloDuoSplitState *state, B
 
     UIView *surface = state.host.view;
     BOOL animate = animated && surface.window && !UIAccessibilityIsReduceMotionEnabled();
-    UIView *snapshot = nil;
-    if (animate) {
-        [surface layoutIfNeeded];
-        snapshot = [surface snapshotViewAfterScreenUpdates:NO];
-        snapshot.frame = surface.bounds;
-        snapshot.userInteractionEnabled = NO;
-    }
+    [surface layoutIfNeeded];
     // Settle the final split underneath: previous feed on the left, its
     // thread on the right.
     objc_setAssociatedObject(previous, &kDuoFeedLinkReturnDetail, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [state.feed setViewControllers:[pages subarrayWithRange:NSMakeRange(0, pages.count - 1)] animated:NO];
-    UIViewController *backstop = state.secondary.viewControllers.firstObject;
-    [state.secondary setViewControllers:[(backstop ? @[backstop] : @[]) arrayByAddingObjectsFromArray:ret.detail] animated:NO];
-    ApolloDuoPostsSyncColumns(state);
-    [surface layoutIfNeeded];
-    ApolloLog(@"[DuoSplit] Back from a feed link; restored %lu thread page(s)%@",
-              (unsigned long)ret.detail.count, animate ? @" (animated)" : @"");
-    if (!snapshot) return top;
-
-    [surface addSubview:snapshot];
-    UIView *feedView = state.feed.view, *threadView = state.secondary.view;
-    CGFloat travel = CGRectGetMaxX(surface.bounds) - CGRectGetMinX([threadView convertRect:threadView.bounds toView:surface]);
-    feedView.alpha = 0.0;
-    feedView.transform = CGAffineTransformMakeTranslation(-48.0, 0.0);
-    threadView.transform = CGAffineTransformMakeTranslation(MAX(0.0, travel), 0.0);
-    [surface bringSubviewToFront:snapshot];
-    [UIView animateWithDuration:0.42 delay:0 usingSpringWithDamping:1.0 initialSpringVelocity:0
-                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
-                     animations:^{
-        snapshot.alpha = 0.0;
-        snapshot.transform = CGAffineTransformMakeTranslation(48.0, 0.0);
-        feedView.alpha = 1.0;
-        feedView.transform = CGAffineTransformIdentity;
-        threadView.transform = CGAffineTransformIdentity;
-    } completion:^(__unused BOOL finished) {
-        [snapshot removeFromSuperview];
-        feedView.alpha = 1.0;
-        feedView.transform = CGAffineTransformIdentity;
-        threadView.transform = CGAffineTransformIdentity;
-    }];
+    ApolloDuoPostsCrossfade(state.host, animate ? surface.bounds : CGRectNull, ^{
+        [state.feed setViewControllers:[pages subarrayWithRange:NSMakeRange(0, pages.count - 1)] animated:NO];
+        UIViewController *backstop = state.secondary.viewControllers.firstObject;
+        [state.secondary setViewControllers:[(backstop ? @[backstop] : @[]) arrayByAddingObjectsFromArray:ret.detail] animated:NO];
+        ApolloDuoPostsSyncColumns(state);
+        [surface layoutIfNeeded];
+    });
+    ApolloLog(@"[DuoSplit] Back from a feed link; restored %lu thread page(s)", (unsigned long)ret.detail.count);
     return top;
 }
 
@@ -4267,6 +4201,26 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
             return YES;
         }
     }
+    if (state.split && !state.changing && [state.kind isEqualToString:@"search"]
+        && ApolloClassCommentsViewController && [page isKindOfClass:ApolloClassCommentsViewController]) {
+        UIViewController *paneRoot = state.secondary.viewControllers.firstObject;
+        if (nav == state.secondary && state.secondary.viewControllers.count == 1
+            && ApolloClassPostsViewController && [paneRoot isKindOfClass:ApolloClassPostsViewController]) {
+            ApolloDuoSearchMovePostsToColumn(state, page, animated);
+            return YES;
+        }
+        if (state.searchColumnPosts && nav == state.primary) {
+            // Picking another post from the column changes the thread in place.
+            UIView *surface = state.host.view;
+            CGRect pane = animated && surface.window && !UIAccessibilityIsReduceMotionEnabled()
+                ? ApolloDuoPostsDetailPane(state) : CGRectNull;
+            ApolloDuoPostsCrossfade(state.host, pane, ^{
+                [state.secondary setViewControllers:@[paneRoot, page] animated:NO];
+                [state.secondary.view layoutIfNeeded];
+            });
+            return YES;
+        }
+    }
     if (state.feed && !state.changing) {
         if (ApolloDuoPostsRouteFeedLink(state, nav, page, animated)) return YES;
         if (state.host.postsColumnsPaired && (nav == state.feed || nav == state.outer)) {
@@ -4288,14 +4242,21 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
             // animation gate; preserve the originating navigation request.
             BOOL animate = animated && !UIAccessibilityIsReduceMotionEnabled();
             ApolloDuoPostsReviewClosedThread(state, ApolloDuoClosedThreadEventFeedOpened, 0.0);
-            [state.secondary setViewControllers:@[state.secondary.viewControllers.firstObject] animated:NO];
-            ApolloDuoPostsSyncColumns(state);
-            [state.host.view layoutIfNeeded];
-            // Let Apollo's navigation controller/delegate perform its normal
-            // forward transition. Replacing the root with animation avoids
-            // accumulating old subreddit pages in the comments Back stack.
-            [state.feed setViewControllers:@[page] animated:animate];
-            ApolloLog(@"[DuoSplit] subreddit forward transition animated=%d", animate);
+            // As Mail changes mailbox: the list changes in place while the sidebar leaves.
+            // A push here ran across the screen at the same time as the sidebar's slide.
+            // Replacing the root avoids accumulating old subreddit pages in the Back stack.
+            UIView *surface = state.host.view;
+            [surface layoutIfNeeded];
+            CGFloat panel = state.host.listVisible ? CGRectGetWidth(state.host.listGlass.bounds) : 0.0;
+            CGRect changing = CGRectMake(panel, 0, MAX(0.0, CGRectGetWidth(surface.bounds) - panel), CGRectGetHeight(surface.bounds));
+            ApolloDuoPostsCrossfade(state.host, animate && surface.window ? changing : CGRectNull, ^{
+                [state.secondary setViewControllers:@[state.secondary.viewControllers.firstObject] animated:NO];
+                ApolloDuoPostsSyncColumns(state);
+                [surface layoutIfNeeded];
+                [state.feed setViewControllers:@[page] animated:NO];
+                [surface layoutIfNeeded];
+            });
+            ApolloLog(@"[DuoSplit] subreddit changed in place animated=%d", animate);
             [state.host setListVisible:NO animated:YES];
         } else if (nav == state.feed || nav == state.outer) {
             if ((!ApolloDuoPostsUsesSplit(state) && !state.host.postsThreadSeparated) || ApolloDuoIsFeedPage(page)) {
@@ -4321,20 +4282,15 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
     // replaces what a closed thread was closed from.
     if (state.feed && ApolloClassPostsViewController && [page isKindOfClass:ApolloClassPostsViewController])
         ApolloDuoPostsReviewClosedThread(state, ApolloDuoClosedThreadEventFeedOpened, 0.0);
-    NSArray<ApolloDuoPostsGeometry *> *searchGeometry = nil;
-    CGRect searchViewport = CGRectZero;
+    UIView *searchPicture = nil;
     if ([state.kind isEqualToString:@"search"] && nav == state.outer && !state.split
         && ApolloDuoSplitShouldOpen((id)nav.tabBarController)) {
         if (state.outer.view.window && !UIAccessibilityIsReduceMotionEnabled()
             && [NSStringFromClass(page.class) isEqualToString:@"Apollo.PostsViewController"]) {
-            // Capture the live Search hierarchy before its controller moves
-            // into the new primary navigation container. Retained search-bar
-            // and row views will resize with the incoming page, not snap to
-            // the narrow column before that page reaches it.
+            // Search narrows into its column under a fade, as every column change does.
             UIView *oldSurface = state.outer.view;
             [oldSurface layoutIfNeeded];
-            searchGeometry = ApolloDuoPostsCaptureGeometry(oldSurface, oldSurface);
-            searchViewport = oldSurface.bounds;
+            searchPicture = [oldSurface snapshotViewAfterScreenUpdates:NO];
         }
         ApolloDuoSplitOpen(state);
     }
@@ -4366,61 +4322,30 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
     } else {
         BOOL searchSubreddit = [state.kind isEqualToString:@"search"]
             && [NSStringFromClass(page.class) isEqualToString:@"Apollo.PostsViewController"];
-        // A new Search detail may still be loading when UIKit performs the
-        // root replacement. Animate its entire live navigation pane, including
-        // chrome, rather than a blank page whose content appears afterward.
-        // This mirrors the explicit rightward Back across the split boundary.
-        [state.secondary setViewControllers:@[page] animated:NO];
+        UIView *surface = state.host.view;
+        // A later subreddit changes in place; the first one's picture was taken above.
+        CGRect pane = searchSubreddit && !searchPicture && surface.window && !UIAccessibilityIsReduceMotionEnabled()
+            ? ApolloDuoPostsDetailPane(state) : CGRectNull;
+        ApolloDuoPostsCrossfade(state.host, pane, ^{
+            [state.secondary setViewControllers:@[page] animated:NO];
+        });
         if (searchSubreddit) {
             ApolloDuoSearchUpdateBackItem(state);
             // The host was just installed as the outer navigation root.
             // Layout the outer container first so UIKit attaches and sizes
             // its child before checking visibility or reading the pane.
-            UIView *surface = state.host.view;
             [UIView performWithoutAnimation:^{
                 [state.outer.view layoutIfNeeded];
                 [surface layoutIfNeeded];
                 [state.secondary.view layoutIfNeeded];
             }];
-            CGRect pane = ApolloDuoPostsDetailPane(state);
-            BOOL animate = state.outer.view.window && !UIAccessibilityIsReduceMotionEnabled()
-                && !CGRectIsNull(pane) && !CGRectIsEmpty(pane);
-            if (animate) {
-                CGFloat travel = CGRectGetMaxX(surface.bounds) - CGRectGetMinX(pane);
-                if (searchGeometry.count) {
-                    // The primary navigation controller is new, but Search's
-                    // content is retained. Give its clipping viewport the old
-                    // full-width endpoint so its live children remain visible
-                    // throughout their coordinated resize into the sidebar.
-                    ApolloDuoPostsGeometry *viewport = [ApolloDuoPostsGeometry new];
-                    viewport.view = state.primary.view;
-                    viewport.bounds = searchViewport;
-                    viewport.surfaceFrame = [surface convertRect:searchViewport fromView:state.outer.view];
-                    NSMutableArray *geometry = [searchGeometry mutableCopy];
-                    [geometry insertObject:viewport atIndex:0];
-                    NSHashTable *retained = [NSHashTable weakObjectsHashTable];
-                    for (ApolloDuoPostsGeometry *item in geometry) if (item.view) [retained addObject:item.view];
-                    CGFloat expansion = CGRectGetWidth(searchViewport) - CGRectGetWidth(state.primary.view.bounds);
-                    // UIKit may create new clipping wrappers around the
-                    // retained page. Their leading edges stay fixed, and their
-                    // widths follow the new navigation viewport as well.
-                    for (UIView *wrapper = state.root.view.superview;
-                         wrapper && wrapper != state.primary.view;
-                         wrapper = wrapper.superview) {
-                        if ([retained containsObject:wrapper]) continue;
-                        ApolloDuoPostsGeometry *item = [ApolloDuoPostsGeometry new];
-                        item.view = wrapper;
-                        item.parent = wrapper.superview;
-                        CGRect bounds = wrapper.bounds;
-                        bounds.size.width += expansion;
-                        item.bounds = bounds;
-                        item.position = CGPointMake(wrapper.layer.position.x + expansion * wrapper.layer.anchorPoint.x,
-                                                    wrapper.layer.position.y);
-                        [geometry addObject:item];
-                    }
-                    ApolloDuoAnimateRetainedGeometry(geometry, state.primary.view, surface, 0.32, YES, NO);
-                }
-                if (travel > 0) ApolloDuoSlideView(state.secondary.view, travel, 0, 0.32, nil);
+            if (searchPicture) {
+                searchPicture.frame = surface.bounds;
+                searchPicture.userInteractionEnabled = NO;
+                [surface addSubview:searchPicture];
+                [UIView animateWithDuration:0.2 delay:0 options:UIViewAnimationOptionCurveEaseOut
+                                 animations:^{ searchPicture.alpha = 0; }
+                                 completion:^(__unused BOOL finished) { [searchPicture removeFromSuperview]; }];
             }
         }
     }
@@ -4643,6 +4568,12 @@ static void ApolloDuoInstallListReselectionGuard(Class listClass) {
 - (UIViewController *)popViewControllerAnimated:(BOOL)animated {
     ApolloDuoSplitRememberSettings(self);
     ApolloDuoSplitState *separatedState = ApolloDuoSplitStateForNavigation(self, NO);
+    if (separatedState.searchColumnPosts && !separatedState.changing && separatedState.secondary.viewControllers.count == 2
+        && (self == separatedState.secondary || self == separatedState.primary || self == separatedState.outer)) {
+        UIViewController *thread = separatedState.secondary.topViewController;
+        ApolloDuoSearchMovePostsBack(separatedState, animated);
+        return thread;
+    }
     if (separatedState.host.postsThreadSeparated && !separatedState.host.postsOverlayVisible && !separatedState.changing
         && separatedState.secondary.viewControllers.count == 2
         && (self == separatedState.secondary || self == separatedState.outer)) {

@@ -34,7 +34,6 @@
 #import "ApolloActionMenu.h"
 #import "ApolloCommon.h"
 #import "ApolloGalleryFeed.h"
-#import "ApolloGalleryMenu.h"
 #import "ApolloGallerySource.h"
 #import "ApolloGalleryViewController.h"
 #import "ApolloNativeActionMenus.h"
@@ -144,11 +143,6 @@ static NSString *ApolloGalleryMenuIdentifierForOwner(UIViewController *owner) {
 
 static NSString *ApolloGalleryMenuListingIdentifierForController(id actionController) {
     return ApolloGalleryMenuIdentifierForOwner(ApolloGalleryMenuOwnerForController(actionController));
-}
-
-UIViewController *ApolloGalleryMenuHomeOwnerForActionController(id actionController) {
-    UIViewController *owner = ApolloGalleryMenuOwnerForController(actionController);
-    return ApolloGalleryMenuHomeIdentifierForOwner(owner) ? owner : nil;
 }
 
 static NSString *ApolloGalleryMenuSourceDescription(NSString *listingIdentifier) {
