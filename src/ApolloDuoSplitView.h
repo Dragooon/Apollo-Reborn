@@ -27,6 +27,9 @@ BOOL ApolloDuoSplitCanDragPostsOverlay(UINavigationController *navigation);
 BOOL ApolloDuoNativeBackPanOwns(UINavigationController *navigation);
 /// Landscape: a right swipe on the thread beside Posts opens the subreddit panel.
 BOOL ApolloDuoSplitThreadSwipeOpensPanel(UINavigationController *navigation);
+// Three-column Posts: whether a right swipe here shows the next column out, and doing it.
+BOOL ApolloDuoSplitTripleCanRevealLevel(UINavigationController *navigation);
+BOOL ApolloDuoSplitTripleRevealLevel(UINavigationController *navigation);
 /// The subreddit panel follows a right drag from the feed root or that thread.
 BOOL ApolloDuoSplitCanDragSubredditPanel(UINavigationController *navigation);
 void ApolloDuoSplitDragSubredditPanel(UINavigationController *navigation, UIGestureRecognizerState phase, CGFloat translation, CGFloat velocity);

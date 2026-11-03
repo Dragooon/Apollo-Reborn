@@ -33,7 +33,8 @@ static BOOL ApolloDuoSwipeEnvironmentAllows(UINavigationController *navigation) 
 static BOOL ApolloDuoBackSwipeCanNavigate(UINavigationController *navigation) {
     // A visited profile is a visit of the whole account split, header column
     // included: from either column, Back leaves the profile.
-    BOOL pane = (navigation.viewControllers.count > 1 || ApolloDuoSplitCanRevealPostsListWithSwipe(navigation))
+    BOOL pane = (navigation.viewControllers.count > 1 || ApolloDuoSplitCanRevealPostsListWithSwipe(navigation)
+                 || ApolloDuoSplitTripleCanRevealLevel(navigation))
         && ApolloDuoSplitAllowsNavigationSwipe(navigation)
         && ApolloDuoSplitDetailNavigation(navigation) == navigation;
     return (pane || ApolloDuoSplitCanReturnFromVisitedProfile(navigation)) && ApolloDuoSwipeEnvironmentAllows(navigation);
@@ -46,11 +47,13 @@ typedef NS_ENUM(NSInteger, ApolloDuoPaneRoute) {
     ApolloDuoPaneRoutePostsOverlay,   // Portrait thread: Posts over it.
     ApolloDuoPaneRouteApolloBack,     // A page to pop: Apollo's own pan follows the finger.
     ApolloDuoPaneRoutePaneBack,       // One animated Back on a stack Apollo's pan can't drive.
+    ApolloDuoPaneRouteNextColumn,     // Three columns: UIKit shows the next column out.
 };
 
 static ApolloDuoPaneRoute ApolloDuoPaneRouteFor(UINavigationController *navigation) {
     if (!ApolloDuoBackSwipeCanNavigate(navigation)) return ApolloDuoPaneRouteNone;
     if (ApolloDuoSplitCanReturnFromVisitedProfile(navigation)) return ApolloDuoPaneRouteVisitedProfile;
+    if (ApolloDuoSplitTripleCanRevealLevel(navigation)) return ApolloDuoPaneRouteNextColumn;
     if (navigation.viewControllers.count == 1 || ApolloDuoSplitThreadSwipeOpensPanel(navigation)) return ApolloDuoPaneRouteSubredditPanel;
     if (ApolloDuoSplitCanRevealPostsOverlay(navigation)) return ApolloDuoPaneRoutePostsOverlay;
     return ApolloDuoNativeBackPanOwns(navigation) ? ApolloDuoPaneRouteApolloBack : ApolloDuoPaneRoutePaneBack;
@@ -304,6 +307,10 @@ static const NSTimeInterval kApolloDuoHighlightGuardDelay = 0.12;
         case ApolloDuoPaneRoutePostsOverlay:
             ApolloLog(@"[DuoSwipe] thread in portrait: reveal Posts overlay");
             ApolloDuoSplitRevealPostsOverlay(navigation);
+            return;
+        case ApolloDuoPaneRouteNextColumn:
+            ApolloLog(@"[DuoSwipe] three columns: show the next column out");
+            ApolloDuoSplitTripleRevealLevel(navigation);
             return;
         case ApolloDuoPaneRoutePaneBack:
             ApolloLog(@"[DuoSwipe] Back in pane; stack pages=%lu", (unsigned long)navigation.viewControllers.count);
