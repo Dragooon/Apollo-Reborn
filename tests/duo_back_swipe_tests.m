@@ -123,6 +123,7 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 @property(nonatomic, strong) UIViewController *root;
 @property(nonatomic, strong) TestDuoHost *host;
 @property(nonatomic) BOOL changing;
+@property(nonatomic) BOOL triple;
 @end
 @implementation ApolloDuoSplitState @end
 static BOOL duo = YES, disabled, leftSwipesDisabled, rightSwipesDisabled, resizing, reduceMotion;

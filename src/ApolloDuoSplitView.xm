@@ -39,6 +39,7 @@ static void ApolloDuoPostsDragPanned(ApolloDuoSplitHost *host, UIPanGestureRecog
 static void ApolloDuoToggleFeedLayout(ApolloDuoSplitHost *host);
 static void ApolloDuoToggleVisibleFeedLayout(UIViewController *controller, BOOL enabled);
 static NSUInteger ApolloDuoFeedStackKeptCount(UINavigationController *feed);
+static BOOL ApolloDuoTripleSidebarShowing(UISplitViewController *split);
 
 // The Posts column on an open Duo, in both orientations: by default about an
 // iPhone's width, which is what Apollo's rows are built for, so the thread beside
@@ -1196,6 +1197,11 @@ static BOOL ApolloDuoSafeAreaInsetsMatch(UIEdgeInsets a, UIEdgeInsets b) {
 @property(nonatomic, strong) UIBarButtonItem *searchBackItem;
 @property(nonatomic) BOOL searchBackSupplementedNative;
 @property(nonatomic) BOOL sidebarHiddenForGallery;
+// Posts as UIKit's own three columns: subreddits, Posts, thread (ApolloDuoTripleSync).
+@property(nonatomic) BOOL triple;
+// The orientation the three columns were last arranged for: nil, @NO portrait, @YES landscape.
+@property(nonatomic, strong) NSNumber *tripleLandscape;
+@property(nonatomic) BOOL tripleThreadShown;
 @end
 @implementation ApolloDuoSplitState @end
 
@@ -1345,12 +1351,16 @@ UINavigationController *ApolloDuoSplitDetailNavigation(UINavigationController *n
     // A Back addressed to a visible pane belongs to that pane. Only the outer
     // shell / drawer forwards Back to whichever content is currently showing.
     if (nav == state.feed || nav == state.secondary) return nav;
+    if (state.triple && state.split && !state.changing)
+        return state.secondary.viewControllers.count > 2 || state.feed.viewControllers.count < 2 ? state.secondary : state.feed;
     return state.split && !state.changing ? (state.feed && !state.host.postsShowingDetail ? state.feed : state.secondary) : nav;
 }
 
 BOOL ApolloDuoSplitAllowsNavigationSwipe(UINavigationController *nav) {
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
     if (state.changing) return NO;
+    // UIKit's split gesture and each column's native Back drive the three columns.
+    if (state.triple && state.split) return NO;
     if (!state.split) return YES;
     return !state.host.listVisible && (nav == state.feed || nav == state.secondary);
 }
@@ -1422,7 +1432,7 @@ void ApolloDuoSplitDragSubredditPanel(UINavigationController *nav, UIGestureReco
 
 BOOL ApolloDuoSplitCanRevealPostsListWithSwipe(UINavigationController *nav) {
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
-    return state.split && !state.changing && state.feed == nav
+    return state.split && !state.triple && !state.changing && state.feed == nav
         && !state.host.listVisible && nav.viewControllers.count == 1;
 }
 
@@ -1578,6 +1588,11 @@ BOOL ApolloDuoSplitIsSidebarController(UIViewController *controller) {
 // tab toggles the list like its List button. The feed behind it is untouched.
 BOOL ApolloDuoSplitDismissPostsList(UINavigationController *nav) {
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
+    if (state.triple && state.split) {
+        if (state.changing || !ApolloDuoTripleSidebarShowing(state.split)) return NO;
+        [state.split hideColumn:UISplitViewControllerColumnPrimary];
+        return YES;
+    }
     if (!state.split || !state.feed || state.changing || !state.host.listVisible) return NO;
     [state.host setListVisible:NO animated:!UIAccessibilityIsReduceMotionEnabled()];
     return YES;
@@ -1587,6 +1602,11 @@ BOOL ApolloDuoSplitDismissPostsList(UINavigationController *nav) {
 // cover display keep their native behavior.
 BOOL ApolloDuoSplitRevealPostsList(UINavigationController *nav) {
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
+    if (state.triple && state.split) {
+        if (state.changing) return NO;
+        [state.split showColumn:UISplitViewControllerColumnPrimary];
+        return YES;
+    }
     if (!state.split || !state.feed || state.changing) return NO;
     [state.host setListVisible:YES animated:!UIAccessibilityIsReduceMotionEnabled()];
     return YES;
@@ -1595,6 +1615,11 @@ BOOL ApolloDuoSplitRevealPostsList(UINavigationController *nav) {
 BOOL ApolloDuoSplitShowSidebar(UINavigationController *nav) {
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
     if (!state.split) return NO;
+    if (state.triple) {
+        if (ApolloDuoTripleSidebarShowing(state.split)) [state.split hideColumn:UISplitViewControllerColumnPrimary];
+        else [state.split showColumn:UISplitViewControllerColumnPrimary];
+        return YES;
+    }
     if (state.feed) [state.host setListVisible:!state.host.listVisible animated:YES];
     else [state.split showColumn:UISplitViewControllerColumnPrimary];
     return YES;
@@ -1651,10 +1676,68 @@ static void ApolloDuoSplitObserveHinge(UITabBarController *tabs) {
     }
 }
 
+// Posts in three columns, per the HIG's sidebar guidance: a hierarchy deeper than
+// two levels puts a content list between the sidebar and the detail
+// (https://developer.apple.com/design/human-interface-guidelines/sidebars).
+// Every column keeps one width per orientation, so Texture lays rows out once
+// and nothing ever animates a width. Columns only move: landscape tiles Posts
+// beside the thread and the sidebar displaces both; portrait shows the thread
+// and Posts, then the sidebar, come over it. Selection swaps the next column
+// instantly, as the HIG asks of frequent interactions
+// (https://developer.apple.com/design/human-interface-guidelines/motion).
+static BOOL ApolloDuoTripleEnabled(void) {
+    return ![NSUserDefaults.standardUserDefaults boolForKey:@"ApolloDuoTripleColumnDisabled"];
+}
+
+static BOOL ApolloDuoTripleSidebarShowing(UISplitViewController *split) {
+    UISplitViewControllerDisplayMode mode = split.displayMode;
+    return mode == UISplitViewControllerDisplayModeTwoBesideSecondary
+        || mode == UISplitViewControllerDisplayModeTwoOverSecondary
+        || mode == UISplitViewControllerDisplayModeTwoDisplaceSecondary;
+}
+
+static void ApolloDuoTripleSetPrimaryWidth(UISplitViewController *split, CGFloat width) {
+    if (split.minimumPrimaryColumnWidth == width && split.maximumPrimaryColumnWidth == width
+        && split.preferredPrimaryColumnWidth == width) return;
+    // Widen the allowed range first so neither bound rejects the other.
+    split.maximumPrimaryColumnWidth = MAX(width, split.maximumPrimaryColumnWidth);
+    split.minimumPrimaryColumnWidth = width;
+    split.maximumPrimaryColumnWidth = width;
+    split.preferredPrimaryColumnWidth = width;
+}
+
+static void ApolloDuoTripleSetSupplementaryWidth(UISplitViewController *split, CGFloat width) {
+    if (split.minimumSupplementaryColumnWidth == width && split.maximumSupplementaryColumnWidth == width
+        && split.preferredSupplementaryColumnWidth == width) return;
+    split.maximumSupplementaryColumnWidth = MAX(width, split.maximumSupplementaryColumnWidth);
+    split.minimumSupplementaryColumnWidth = width;
+    split.maximumSupplementaryColumnWidth = width;
+    split.preferredSupplementaryColumnWidth = width;
+}
+
+static void ApolloDuoTripleApplyWidths(ApolloDuoSplitState *state) {
+    UISplitViewController *split = state.split;
+    CGSize canvas = sDuoSplitResizingTabs ? sDuoSplitTargetSize : state.host.view.bounds.size;
+    if (!split || canvas.width <= 0.0) return;
+    BOOL landscape = canvas.width > canvas.height;
+    CGFloat sidebar = landscape ? 320.0 : ApolloDuoPortraitPanelWidth(canvas.width);
+    CGFloat posts = landscape ? ApolloDuoPostsColumnWidth(canvas.width, state.halfWidthSidebar)
+        : ApolloDuoPortraitPostsWidth(canvas.width);
+    ApolloDuoTripleSetPrimaryWidth(split, sidebar);
+    ApolloDuoTripleSetSupplementaryWidth(split, posts);
+    if (@available(iOS 26.0, *)) {
+        if (split.minimumSecondaryColumnWidth != 240.0) split.minimumSecondaryColumnWidth = 240.0;
+    }
+}
+
 static void ApolloDuoSplitApplySidebarWidth(ApolloDuoSplitState *state, BOOL halfWidth) {
     UISplitViewController *split = state.split;
     if (!split) return;
     state.halfWidthSidebar = halfWidth;
+    if (state.triple) {
+        ApolloDuoTripleApplyWidths(state);
+        return;
+    }
     // Lift the ordinary sidebar cap in book posture: half of a 951pt inner
     // display is 475.5pt, and retaining the 420pt cap misses the hinge.
     CGSize canvas = sDuoSplitResizingTabs ? sDuoSplitTargetSize : state.host.view.bounds.size;
@@ -1868,7 +1951,89 @@ static void ApolloDuoPostsRememberClosedThread(ApolloDuoSplitState *state, NSArr
     ApolloLog(@"[DuoSplit] remembered the closed thread (%lu page(s)) for a forward swipe", (unsigned long)pages.count);
 }
 
+@interface ApolloDuoTripleEmptyPage : UIViewController
+@end
+@implementation ApolloDuoTripleEmptyPage
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    UILabel *label = [UILabel new];
+    label.translatesAutoresizingMaskIntoConstraints = NO;
+    label.text = @"No Post Selected";
+    label.textColor = UIColor.secondaryLabelColor;
+    label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle3];
+    label.adjustsFontForContentSizeCategory = YES;
+    [self.view addSubview:label];
+    [NSLayoutConstraint activateConstraints:@[
+        [label.centerXAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerXAnchor],
+        [label.centerYAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerYAnchor]
+    ]];
+}
+@end
+
+static char kDuoTripleHidBack;
+
+// A thread is the pane's content, not a page above the empty state: as in Mail,
+// another pick replaces it and there is nothing to go Back to.
+static void ApolloDuoTripleMarkThreadRoot(UIViewController *page) {
+    if (!page || page.navigationItem.hidesBackButton) return;
+    page.navigationItem.hidesBackButton = YES;
+    objc_setAssociatedObject(page, &kDuoTripleHidBack, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static void ApolloDuoTripleRestoreBackButtons(NSArray<UIViewController *> *pages) {
+    for (UIViewController *page in pages) {
+        if (![objc_getAssociatedObject(page, &kDuoTripleHidBack) boolValue]) continue;
+        page.navigationItem.hidesBackButton = NO;
+        objc_setAssociatedObject(page, &kDuoTripleHidBack, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+}
+
+static void ApolloDuoTripleSync(ApolloDuoSplitState *state) {
+    UISplitViewController *split = state.split;
+    if (!split || state.changing) return;
+    ApolloDuoTripleApplyWidths(state);
+    // Apollo's Swift helpers can push a thread onto Posts without the ObjC push
+    // hook. Whatever follows the feed pages belongs in the thread column.
+    NSUInteger feedKept = ApolloDuoFeedStackKeptCount(state.feed);
+    if (state.feed.viewControllers.count > feedKept && !state.feed.transitionCoordinator) {
+        NSArray *pushed = [state.feed.viewControllers subarrayWithRange:NSMakeRange(feedKept, state.feed.viewControllers.count - feedKept)];
+        UIViewController *empty = state.secondary.viewControllers.firstObject ?: [ApolloDuoTripleEmptyPage new];
+        state.changing = YES;
+        [UIView performWithoutAnimation:^{
+            [state.feed setViewControllers:[state.feed.viewControllers subarrayWithRange:NSMakeRange(0, feedKept)] animated:NO];
+            [state.secondary setViewControllers:[@[empty] arrayByAddingObjectsFromArray:pushed] animated:NO];
+        }];
+        state.changing = NO;
+        ApolloLog(@"[DuoTriple] moved %lu page(s) from Posts to the thread column", (unsigned long)pushed.count);
+    }
+    BOOL thread = state.secondary.viewControllers.count > 1;
+    if (thread) ApolloDuoTripleMarkThreadRoot(state.secondary.viewControllers[1]);
+    // Before the host has a size, its orientation isn't known yet.
+    CGSize canvas = sDuoSplitResizingTabs ? sDuoSplitTargetSize : state.host.view.bounds.size;
+    if (canvas.width <= 0.0 || canvas.height <= 0.0) return;
+    BOOL landscape = ApolloDuoPostsHasLandscapeColumns(state);
+    if (!state.tripleLandscape || state.tripleLandscape.boolValue != landscape) {
+        // A new orientation sets the resting arrangement outright: the size
+        // change is already moving everything.
+        state.tripleLandscape = @(landscape);
+        split.preferredSplitBehavior = landscape ? UISplitViewControllerSplitBehaviorDisplace
+            : UISplitViewControllerSplitBehaviorOverlay;
+        split.preferredDisplayMode = landscape ? UISplitViewControllerDisplayModeOneBesideSecondary
+            : (thread ? UISplitViewControllerDisplayModeSecondaryOnly : UISplitViewControllerDisplayModeOneOverSecondary);
+        ApolloLog(@"[DuoTriple] arranged for %@ thread=%d", landscape ? @"landscape" : @"portrait", thread);
+    } else if (!landscape && state.tripleThreadShown && !thread) {
+        // The last thread page went: show Posts over the empty pane.
+        [split showColumn:UISplitViewControllerColumnSupplementary];
+    }
+    state.tripleThreadShown = thread;
+}
+
 static void ApolloDuoPostsSyncColumnsWithAnimation(ApolloDuoSplitState *state, BOOL animateDisplayMode) {
+    if (state.triple) {
+        ApolloDuoTripleSync(state);
+        return;
+    }
     if (!state.split || !state.feed) ApolloDuoPostsForgetClosedThread(state, @"the split ended");
     if (!state.feed || !state.split || state.changing) return;
     // A rotation to portrait, the split turned off or a thread put beside the
@@ -3603,7 +3768,49 @@ static void ApolloDuoSplitOpen(ApolloDuoSplitState *state) {
         placeholder.view.backgroundColor = UIColor.systemBackgroundColor;
         [state.secondary setViewControllers:@[placeholder] animated:NO];
     }
-    if (posts) {
+    if (posts && ApolloDuoTripleEnabled()) {
+        state.triple = YES;
+        state.tripleLandscape = nil;
+        state.feed = [[outer.class alloc] init];
+        ApolloDuoSplitLink(state.feed, state);
+        NSUInteger feedCount = detail.count ? 1 : 0;
+        while (feedCount < detail.count && ApolloDuoIsFeedPage(detail[feedCount])) feedCount++;
+        NSArray *feedPages = feedCount ? [detail subarrayWithRange:NSMakeRange(0, feedCount)] : @[[UIViewController new]];
+        NSArray *thread = detail.count > feedCount
+            ? [detail subarrayWithRange:NSMakeRange(feedCount, detail.count - feedCount)] : @[];
+        [state.secondary setViewControllers:@[] animated:NO];
+        [state.feed setViewControllers:feedPages animated:NO];
+        [state.secondary setViewControllers:[@[[ApolloDuoTripleEmptyPage new]] arrayByAddingObjectsFromArray:thread] animated:NO];
+        if (thread.count) ApolloDuoTripleMarkThreadRoot(thread.firstObject);
+        UISplitViewController *triple = [[UISplitViewController alloc] initWithStyle:UISplitViewControllerStyleTripleColumn];
+        if (@available(iOS 17.0, *)) {
+            triple.traitOverrides.horizontalSizeClass = UIUserInterfaceSizeClassRegular;
+        }
+        triple.primaryEdge = UISplitViewControllerPrimaryEdgeLeading;
+        // UIKit's own edge swipe and sidebar button reveal the columns.
+        triple.presentsWithGesture = YES;
+        triple.displayModeButtonVisibility = UISplitViewControllerDisplayModeButtonVisibilityAutomatic;
+        [triple setViewController:state.primary forColumn:UISplitViewControllerColumnPrimary];
+        [triple setViewController:state.feed forColumn:UISplitViewControllerColumnSupplementary];
+        [triple setViewController:state.secondary forColumn:UISplitViewControllerColumnSecondary];
+        if (split.parentViewController) {
+            [split willMoveToParentViewController:nil];
+            [split.view removeFromSuperview];
+            [split removeFromParentViewController];
+        }
+        ApolloDuoSplitHost *tripleHost = [ApolloDuoSplitHost new];
+        tripleHost.extendedLayoutIncludesOpaqueBars = YES;
+        tripleHost.split = triple;
+        state.split = triple;
+        state.host = tripleHost;
+        host = tripleHost;
+        [outer setViewControllers:@[host] animated:NO];
+        state.changing = NO;
+        ApolloDuoTripleSync(state);
+        state.changing = YES;
+        ApolloLog(@"[DuoTriple] opened Posts in three columns (%lu feed, %lu thread page(s))",
+                  (unsigned long)feedPages.count, (unsigned long)thread.count);
+    } else if (posts) {
         state.feed = [[outer.class alloc] init];
         ApolloDuoSplitLink(state.feed, state);
         // Leading subreddit/feed pages stay on the left; only what follows
@@ -3785,6 +3992,7 @@ static void ApolloDuoSplitClose(ApolloDuoSplitState *state, BOOL preserveDetail)
     ApolloDuoResumeVideosAfterMove(moving);
     ApolloDuoPostsStopGeometry(state.host.searchNavigation.viewIfLoaded);
     ApolloDuoSearchRestoreBackItem(state);
+    if (state.triple) ApolloDuoTripleRestoreBackButtons(state.secondary.viewControllers);
     NSArray *detail = [state.secondary.viewControllers copy];
     if (state.feed) {
         ApolloNativeFeedSearchSetDuoControls(state.host.feedControlsOwner, nil, nil, nil);
@@ -3834,6 +4042,9 @@ static void ApolloDuoSplitClose(ApolloDuoSplitState *state, BOOL preserveDetail)
     if (state.profilePrefix.count) restored = [state.profilePrefix arrayByAddingObjectsFromArray:restored];
     [state.outer setViewControllers:restored animated:NO];
     [state.outer setNavigationBarHidden:state.navigationBarWasHidden animated:NO];
+    state.triple = NO;
+    state.tripleLandscape = nil;
+    state.tripleThreadShown = NO;
     // Account switches update the native profile title while the split is open.
     // Restoring its entry-time title would repoint the cover header at the old user.
     if (![state.kind isEqualToString:@"account"]) state.root.navigationItem.title = state.sidebarTitle;
@@ -4174,6 +4385,49 @@ static BOOL ApolloDuoSplitRouteSettingsRedditContent(ApolloDuoSplitState *state,
     return NO;
 }
 
+// Three columns: a feed picked in the sidebar replaces Posts in place and the
+// sidebar leaves; a feed link inside Posts is a native push inside that column;
+// anything else opened from Posts or the shell replaces the thread column's
+// content at once. Pages opened inside the thread push natively there.
+static BOOL ApolloDuoTripleRoutePush(ApolloDuoSplitState *state, UINavigationController *nav, UIViewController *page) {
+    UISplitViewController *split = state.split;
+    BOOL feedPage = ApolloDuoIsFeedPage(page);
+    BOOL landscape = ApolloDuoPostsHasLandscapeColumns(state);
+    if (nav == state.secondary) return NO;
+    if (nav == state.feed && feedPage) return NO;
+    if (nav == state.primary && !feedPage) return NO;
+    page.extendedLayoutIncludesOpaqueBars = YES;
+    if (feedPage) {
+        state.needsDefault = NO;
+        ApolloDuoPostsReviewClosedThread(state, ApolloDuoClosedThreadEventFeedOpened, 0.0);
+        state.changing = YES;
+        [UIView performWithoutAnimation:^{
+            [state.feed setViewControllers:@[page] animated:NO];
+            [state.feed.view layoutIfNeeded];
+        }];
+        state.changing = NO;
+        if (ApolloDuoTripleSidebarShowing(split)) [split hideColumn:UISplitViewControllerColumnPrimary];
+        ApolloLog(@"[DuoTriple] feed changed in place");
+        return YES;
+    }
+    UIViewController *empty = state.secondary.viewControllers.firstObject ?: [ApolloDuoTripleEmptyPage new];
+    ApolloDuoTripleRestoreBackButtons(state.secondary.viewControllers);
+    ApolloDuoTripleMarkThreadRoot(page);
+    state.changing = YES;
+    [UIView performWithoutAnimation:^{
+        [state.secondary setViewControllers:@[empty, page] animated:NO];
+        [state.secondary.view layoutIfNeeded];
+    }];
+    state.changing = NO;
+    state.tripleThreadShown = YES;
+    // Portrait: Posts and the sidebar step aside for what was picked.
+    if (!landscape && split.displayMode != UISplitViewControllerDisplayModeSecondaryOnly)
+        [split hideColumn:UISplitViewControllerColumnSupplementary];
+    else if (ApolloDuoTripleSidebarShowing(split)) [split hideColumn:UISplitViewControllerColumnPrimary];
+    ApolloLog(@"[DuoTriple] thread column shows %@", NSStringFromClass(page.class));
+    return YES;
+}
+
 static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewController *page, BOOL animated) {
     if (sDuoSplitPushingFeedLink) return NO;
     // UIKit pushes column containers while adapting a split. Those are native
@@ -4202,6 +4456,7 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
         }
     }
     if (state.feed && !state.changing) {
+        if (state.triple) return ApolloDuoTripleRoutePush(state, nav, page);
         if (ApolloDuoPostsRouteFeedLink(state, nav, page, animated)) return YES;
         if (state.host.postsColumnsPaired && (nav == state.feed || nav == state.outer)) {
             NSString *incomingPost = ApolloDuoCommentsPostID(page);
@@ -4439,6 +4694,8 @@ static void ApolloDuoInstallListReselectionGuard(Class listClass) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     %orig(tableView, indexPath);
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(((UIViewController *)self).navigationController, NO);
+    // Three columns keep the row highlighted, as the HIG asks of split views.
+    if (state.triple) return;
     // A picked row is a feed switch, which can reuse the visible feed page.
     if (state.feed && !((UIViewController *)self).isEditing)
         ApolloDuoPostsReviewClosedThread(state, ApolloDuoClosedThreadEventFeedOpened, 0.0);
@@ -4595,7 +4852,7 @@ static void ApolloDuoInstallListReselectionGuard(Class listClass) {
     UINavigationController *detail = ApolloDuoSplitDetailNavigation(self);
     if (detail != self) return [detail popViewControllerAnimated:animated];
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(self, NO);
-    if (state.feed && !state.changing && self == state.secondary && state.secondary.viewControllers.count == 2) {
+    if (state.feed && !state.triple && !state.changing && self == state.secondary && state.secondary.viewControllers.count == 2) {
         UIViewController *page = state.secondary.topViewController;
         ApolloDuoPostsSetDetail(state, nil, animated);
         return page;
