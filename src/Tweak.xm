@@ -3742,6 +3742,7 @@ static void ApolloShowRedditRateLimitToast(NSTimeInterval seconds) {
                                     UDKeyCommunityHighlightsWeb: @NO,
                                     UDKeyClassicTabBarScrollBehavior: @NO,
                                     UDKeyHideTopBarOnScroll: @NO,
+                                    UDKeyHomeFeedForYou: @YES,
                                     UDKeyTabBarCollapseSide: @0,
                                     UDKeyKeepSearchBarInPlace: @NO,
                                     UDKeyIPadTabBarBottom: @NO,
