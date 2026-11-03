@@ -182,7 +182,6 @@ BOOL sAppleTranslateSheet = NO;
 
 BOOL sWebJSONEnabled = NO;
 BOOL sReduceRateLimiting = NO;
-BOOL sForYouHomeFeed = YES;
 BOOL sKeylessRouteUpdates = YES;
 BOOL sPollsFeatureEnabled = NO;
 NSInteger sPollOptionAlignment = ApolloPollOptionAlignmentCenter;

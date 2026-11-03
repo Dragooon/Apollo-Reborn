@@ -647,9 +647,6 @@ extern BOOL sWebJSONEnabled;
 // active account is API-key-free; read it through
 // ApolloReduceRateLimitingActive() (ApolloReduceRateLimiting.h). Default NO.
 extern BOOL sReduceRateLimiting;
-// Home's For You feed (UDKeyForYouHomeFeed). API-key-free accounts only. Set it
-// through ApolloForYouHomeFeedSetEnabled. Default YES.
-extern BOOL sForYouHomeFeed;
 // Use Route Updates (UDKeyKeylessRouteUpdates): keyless-routes.json may adjust
 // the API-Key-Free route table (ApolloWebJSONRouteUpdates.h). Default YES.
 extern BOOL sKeylessRouteUpdates;

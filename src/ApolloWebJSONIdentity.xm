@@ -76,8 +76,6 @@
 #import "ApolloUserProfileCache.h"
 #import "ApolloWebSessionStore.h"
 #import "ApolloReduceRateLimiting.h"
-#import "ApolloForYouFeed.h"
-#import "ApolloForYouMenu.h"
 
 // Minimal surface of Apollo's RedditKit classes used here. Real definitions live
 // in Headers/ObjC/{RDKClient,RDKOAuthCredential,RDKAccessToken}.h (not on the
@@ -971,17 +969,6 @@ static void ApolloWebJSONLogRouteOutcomeOnce(NSString *method, NSString *path, N
 #pragma mark - Subscription walk (API-Key-Free)
 
 // The path with any query and leading slashes dropped, lowercased.
-// Main thread only, set around the send that falls back from For You to the
-// request Apollo asked for.
-static BOOL sApolloWebJSONForYouFallingBack = NO;
-
-static void ApolloWebJSONShowForYouFallbackToastOnce(void) {
-    static BOOL shown = NO;
-    if (shown) return;
-    shown = YES;
-    ApolloShowToastWithStyle(@"For You Didn't Load", @"Showing your subscriptions instead.", ApolloToastStyleInfo, nil);
-}
-
 static NSString *ApolloWebJSONBarePath(NSString *path) {
     if (![path isKindOfClass:[NSString class]]) return @"";
     NSString *p = [path.lowercaseString componentsSeparatedByString:@"?"].firstObject ?: @"";
@@ -1191,46 +1178,6 @@ static BOOL ApolloWebJSONKeepSubscriptionListAfterFailedWalk(RDKUser *user, NSAr
         }
         completion(response, guarded, error);
     };
-
-    // Home's For You feed (ApolloForYouFeed.h). Its first page falls back to the
-    // request Apollo asked for, so Home still loads if the feed can't. A later
-    // page has no such fallback: `after` is a post from the For You feed, not
-    // from subscriptions, so it reports a failed load instead.
-    if (username && sForYouHomeFeed && routesTried == 0 && !sApolloWebJSONForYouFallingBack
-        && [requestMethod.uppercaseString isEqualToString:@"GET"]) {
-        NSString *homeSort = ApolloForYouFeedHomeSortFromPath(requestPath);
-        if (homeSort && !ApolloForYouFeedSortIsServed(homeSort)) ApolloForYouNoteUnservedHomeSort();
-        if (homeSort && ApolloForYouFeedSortIsServed(homeSort)) {
-            ApolloForYouNoteServedHomeSort();
-            NSDictionary *pageParameters = [sentParameters isKindOfClass:[NSDictionary class]] ? sentParameters : nil;
-            NSString *after = [pageParameters[@"after"] isKindOfClass:[NSString class]] ? pageParameters[@"after"] : nil;
-            ApolloWebJSONFetchForYouPage(username, after, ^(NSHTTPURLResponse *response, NSDictionary *listing, NSError *error) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (listing) {
-                        if (sShowUserAvatars && ApolloReduceRateLimitingActive()) {
-                            @try { [[ApolloUserProfileCache sharedCache] noteAuthorFullNamesFromListing:listing]; }
-                            @catch (NSException *e) { ApolloLog(@"[UserAvatars] listing author ingest failed: %@", e); }
-                        }
-                        wrapped(response, listing, nil);
-                        return;
-                    }
-                    ApolloLogError(@"[ForYou] Page failed (%@): %@", after.length > 0 ? @"next page" : @"first page", error.localizedDescription);
-                    if (after.length > 0) {
-                        wrapped(nil, nil, error);
-                        return;
-                    }
-                    ApolloWebJSONShowForYouFallbackToastOnce();
-                    sApolloWebJSONForYouFallingBack = YES;
-                    @try {
-                        [client taskWithMethod:requestMethod path:requestPath parameters:sentParameters completion:completion];
-                    } @finally {
-                        sApolloWebJSONForYouFallingBack = NO;
-                    }
-                });
-            });
-            return ApolloWebJSONSharedReadPlaceholderTask();
-        }
-    }
 
     // API-Key-Free duplicate account reads: an identical one in flight or just
     // answered is shared instead of sent again (ApolloWebJSONShareAccountRead).

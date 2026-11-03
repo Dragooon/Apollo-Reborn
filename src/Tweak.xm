@@ -3811,7 +3811,6 @@ static void ApolloShowRedditRateLimitToast(NSTimeInterval seconds) {
                                     UDKeyAutomaticUpdateChecks: @YES,
                                     UDKeyWebJSONEnabled: @NO,
                                     UDKeyReduceRateLimiting: @NO,
-                                    UDKeyForYouHomeFeed: @YES,
                                     UDKeyKeylessRouteUpdates: @YES,
                                     UDKeyReduceRateLimitingOffered: @NO,
                                     UDKeyUseModernRedditChat: @NO,
@@ -4219,7 +4218,6 @@ static void ApolloShowRedditRateLimitToast(NSTimeInterval seconds) {
     // hooks, so reading before they're in place returns nothing.
     sWebJSONEnabled = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyWebJSONEnabled];
     sReduceRateLimiting = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyReduceRateLimiting];
-    sForYouHomeFeed = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyForYouHomeFeed];
     sKeylessRouteUpdates = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyKeylessRouteUpdates];
     sPollsFeatureEnabled = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyPollsEnabled];
     sPollOptionAlignment = [[NSUserDefaults standardUserDefaults] integerForKey:UDKeyPollOptionAlignment];
