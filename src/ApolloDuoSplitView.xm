@@ -41,6 +41,8 @@ static void ApolloDuoToggleFeedLayout(ApolloDuoSplitHost *host);
 static void ApolloDuoToggleVisibleFeedLayout(UIViewController *controller, BOOL enabled);
 static NSUInteger ApolloDuoFeedStackKeptCount(UINavigationController *feed);
 static BOOL ApolloDuoTripleSidebarShowing(UISplitViewController *split);
+@class ApolloDuoSplitState;
+static UISplitViewControllerColumn ApolloDuoTripleListColumn(ApolloDuoSplitState *state);
 
 // The Posts column on an open Duo, in both orientations: by default about an
 // iPhone's width, which is what Apollo's rows are built for, so the thread beside
