@@ -2021,7 +2021,52 @@ typedef NS_ENUM(NSInteger, ApolloDuoTripleArrangement) {
     ApolloDuoTripleLandscape,
     ApolloDuoTriplePortraitEmpty,
     ApolloDuoTriplePortraitThread,
+    ApolloDuoTripleSearching,
 };
+
+// Search's middle column before anything is picked: Apollo's results, or nothing
+// yet. A subreddit there (picked, or pushed from a result) is a Posts view instead.
+@interface ApolloDuoTripleResultsPage : UIViewController
+@end
+@implementation ApolloDuoTripleResultsPage
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.title = @"Results";
+    UILabel *label = [UILabel new];
+    label.translatesAutoresizingMaskIntoConstraints = NO;
+    label.text = @"Search Results";
+    label.textColor = UIColor.secondaryLabelColor;
+    label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle3];
+    label.adjustsFontForContentSizeCategory = YES;
+    [self.view addSubview:label];
+    [NSLayoutConstraint activateConstraints:@[
+        [label.centerXAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerXAnchor],
+        [label.centerYAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerYAnchor]
+    ]];
+}
+@end
+
+static BOOL ApolloDuoTripleListShowsResults(ApolloDuoSplitState *state) {
+    if (![state.kind isEqualToString:@"search"]) return NO;
+    UIViewController *top = state.feed.topViewController;
+    return !top || [top isKindOfClass:ApolloDuoTripleResultsPage.class]
+        || ApolloNamedSubredditForPostsController(top).length == 0;
+}
+
+// Hide a column with UIKit's slide and make the arrangement it lands in the resting
+// one afterwards. Setting the resting mode at once would cut the slide short.
+static void ApolloDuoTripleHideColumn(ApolloDuoSplitState *state, UISplitViewControllerColumn column,
+                                      NSInteger arrangement, UISplitViewControllerDisplayMode rest) {
+    UISplitViewController *split = state.split;
+    state.tripleArrangement = arrangement;
+    [split hideColumn:column];
+    __weak UISplitViewController *weakSplit = split;
+    void (^settle)(void) = ^{ weakSplit.preferredDisplayMode = rest; };
+    id<UIViewControllerTransitionCoordinator> coordinator = split.transitionCoordinator;
+    if (!coordinator || ![coordinator animateAlongsideTransition:nil
+            completion:^(__unused id<UIViewControllerTransitionCoordinatorContext> context) { settle(); }]) settle();
+}
 
 // A thread is the pane's content, not a page above the empty state: as in Mail,
 // another pick replaces it and there is nothing to go Back to.
@@ -2067,7 +2112,10 @@ static void ApolloDuoTripleSync(ApolloDuoSplitState *state) {
     // Landscape, and portrait with nothing picked: Posts sits beside the thread
     // pane and the sidebar displaces both. Portrait with a thread: the thread
     // fills the screen and Posts, then the sidebar, come over it.
-    NSInteger arrangement = landscape ? ApolloDuoTripleLandscape
+    // Search with results and nothing opened shows Search and its results side
+    // by side, the thread pane pushed aside, in both orientations.
+    NSInteger arrangement = !thread && ApolloDuoTripleListShowsResults(state) ? ApolloDuoTripleSearching
+        : landscape ? ApolloDuoTripleLandscape
         : (thread ? ApolloDuoTriplePortraitThread : ApolloDuoTriplePortraitEmpty);
     if (state.tripleArrangement == arrangement) return;
     state.tripleArrangement = arrangement;
@@ -2075,8 +2123,9 @@ static void ApolloDuoTripleSync(ApolloDuoSplitState *state) {
     [UIView performWithoutAnimation:^{
         split.preferredSplitBehavior = beside ? UISplitViewControllerSplitBehaviorDisplace
             : UISplitViewControllerSplitBehaviorOverlay;
-        split.preferredDisplayMode = beside ? UISplitViewControllerDisplayModeOneBesideSecondary
-            : UISplitViewControllerDisplayModeSecondaryOnly;
+        split.preferredDisplayMode = arrangement == ApolloDuoTripleSearching
+            ? UISplitViewControllerDisplayModeTwoDisplaceSecondary
+            : beside ? UISplitViewControllerDisplayModeOneBesideSecondary : UISplitViewControllerDisplayModeSecondaryOnly;
     }];
     ApolloLog(@"[DuoTriple] arranged for %@", landscape ? @"landscape" : thread ? @"portrait thread" : @"portrait, nothing picked");
 }
@@ -3852,14 +3901,16 @@ static void ApolloDuoSplitOpen(ApolloDuoSplitState *state) {
         placeholder.view.backgroundColor = UIColor.systemBackgroundColor;
         [state.secondary setViewControllers:@[placeholder] animated:NO];
     }
-    if (posts && ApolloDuoTripleEnabled()) {
+    BOOL searchColumns = [state.kind isEqualToString:@"search"] && ApolloDuoTripleEnabled();
+    if ((posts || searchColumns) && ApolloDuoTripleEnabled()) {
         state.triple = YES;
         state.tripleArrangement = 0;
         state.feed = [[outer.class alloc] init];
         ApolloDuoSplitLink(state.feed, state);
         NSUInteger feedCount = detail.count ? 1 : 0;
         while (feedCount < detail.count && ApolloDuoIsFeedPage(detail[feedCount])) feedCount++;
-        NSArray *feedPages = feedCount ? [detail subarrayWithRange:NSMakeRange(0, feedCount)] : @[[UIViewController new]];
+        NSArray *feedPages = feedCount ? [detail subarrayWithRange:NSMakeRange(0, feedCount)]
+            : @[searchColumns ? [ApolloDuoTripleResultsPage new] : [UIViewController new]];
         NSArray *thread = detail.count > feedCount
             ? [detail subarrayWithRange:NSMakeRange(feedCount, detail.count - feedCount)] : @[];
         [state.secondary setViewControllers:@[] animated:NO];
@@ -3885,6 +3936,7 @@ static void ApolloDuoSplitOpen(ApolloDuoSplitState *state) {
         ApolloDuoSplitHost *tripleHost = [ApolloDuoSplitHost new];
         tripleHost.extendedLayoutIncludesOpaqueBars = YES;
         tripleHost.split = triple;
+        if (searchColumns) tripleHost.searchNavigation = state.primary;
         state.split = triple;
         state.host = tripleHost;
         host = tripleHost;
@@ -3962,24 +4014,6 @@ static void ApolloDuoSplitOpen(ApolloDuoSplitState *state) {
         // bar (and consume the entire vertical rail under opaque themes).
         [(UINavigationController *)host.accountPrimary.parentViewController setNavigationBarHidden:YES animated:NO];
         [(UINavigationController *)host.accountSecondary.parentViewController setNavigationBarHidden:YES animated:NO];
-    } else if ([state.kind isEqualToString:@"search"] && ApolloDuoTripleEnabled()) {
-        // Search is the root of the list column; subreddits it opens push inside
-        // that column and threads open beside it, exactly as in Posts.
-        state.triple = YES;
-        state.tripleArrangement = 0;
-        NSUInteger listCount = 0;
-        while (listCount < detail.count && ApolloDuoIsFeedPage(detail[listCount])) listCount++;
-        NSArray *listPages = [detail subarrayWithRange:NSMakeRange(0, listCount)];
-        NSArray *thread = [detail subarrayWithRange:NSMakeRange(listCount, detail.count - listCount)];
-        [state.primary setViewControllers:[@[state.root] arrayByAddingObjectsFromArray:listPages] animated:NO];
-        [state.secondary setViewControllers:[@[[ApolloDuoTripleEmptyPage new]] arrayByAddingObjectsFromArray:thread] animated:NO];
-        if (thread.count) ApolloDuoTripleMarkThreadRoot(thread.firstObject);
-        split.presentsWithGesture = YES;
-        split.displayModeButtonVisibility = UISplitViewControllerDisplayModeButtonVisibilityAutomatic;
-        [split setViewController:state.primary forColumn:UISplitViewControllerColumnPrimary];
-        [split setViewController:state.secondary forColumn:UISplitViewControllerColumnSecondary];
-        ApolloLog(@"[DuoTriple] opened Search in columns (%lu list, %lu thread page(s))",
-                  (unsigned long)listPages.count, (unsigned long)thread.count);
     } else {
         [split setViewController:state.primary forColumn:UISplitViewControllerColumnPrimary];
         [split setViewController:state.secondary forColumn:UISplitViewControllerColumnSecondary];
@@ -3995,7 +4029,6 @@ static void ApolloDuoSplitOpen(ApolloDuoSplitState *state) {
     state.needsDefault = detail.count == 0;
     state.changing = NO;
     ApolloDuoSearchUpdateBackItem(state);
-    if (state.triple && !state.feed) ApolloDuoTripleSync(state);
     ApolloLog(@"[DuoSplit] opened native %@ sidebar/detail", state.kind);
     dispatch_async(dispatch_get_main_queue(), ^{ ApolloDuoSplitOpenDefault(state); });
 }
@@ -4097,12 +4130,6 @@ static void ApolloDuoSplitClose(ApolloDuoSplitState *state, BOOL preserveDetail)
     ApolloDuoSearchRestoreBackItem(state);
     if (state.triple) ApolloDuoTripleRestoreBackButtons(state.secondary.viewControllers);
     NSArray *detail = [state.secondary.viewControllers copy];
-    if (state.triple && !state.feed) {
-        NSArray *listPages = state.primary.viewControllers.count > 1
-            ? [state.primary.viewControllers subarrayWithRange:NSMakeRange(1, state.primary.viewControllers.count - 1)] : @[];
-        NSArray *thread = detail.count > 1 ? [detail subarrayWithRange:NSMakeRange(1, detail.count - 1)] : @[];
-        detail = [listPages arrayByAddingObjectsFromArray:thread];
-    }
     if (state.feed) {
         ApolloNativeFeedSearchSetDuoControls(state.host.feedControlsOwner, nil, nil, nil);
         state.host.feedControlsOwner = nil;
@@ -4127,7 +4154,10 @@ static void ApolloDuoSplitClose(ApolloDuoSplitState *state, BOOL preserveDetail)
         state.feedBackHiddenItem.hidesBackButton = NO;
         state.feedBackHiddenItem = nil;
         NSArray *comments = detail.count > 1 ? [detail subarrayWithRange:NSMakeRange(1, detail.count - 1)] : @[];
-        detail = [state.feed.viewControllers arrayByAddingObjectsFromArray:comments];
+        NSMutableArray *feedPages = [NSMutableArray array];
+        for (UIViewController *page in state.feed.viewControllers)
+            if (![page isKindOfClass:ApolloDuoTripleResultsPage.class]) [feedPages addObject:page];
+        detail = [feedPages arrayByAddingObjectsFromArray:comments];
         [state.feed setViewControllers:@[] animated:NO];
     }
     if ([state.kind isEqualToString:@"account"]) {
@@ -4507,7 +4537,17 @@ static BOOL ApolloDuoTripleRoutePush(ApolloDuoSplitState *state, UINavigationCon
     BOOL landscape = ApolloDuoPostsHasLandscapeColumns(state);
     BOOL sidebarPick = state.feed && feedPage && (nav == state.primary || nav == state.outer);
     if (nav == state.secondary && !feedPage) return NO;
-    if (nav == list && feedPage) return NO;
+    if (nav == list && feedPage) {
+        // A subreddit opened from Search's results is a Posts view: Search steps aside.
+        if ([state.kind isEqualToString:@"search"] && ApolloNamedSubredditForPostsController(page).length
+            && ApolloDuoTripleSidebarShowing(split)) {
+            BOOL thread = state.secondary.viewControllers.count > 1;
+            ApolloDuoTripleHideColumn(state, UISplitViewControllerColumnPrimary,
+                landscape ? ApolloDuoTripleLandscape : (thread ? ApolloDuoTriplePortraitThread : ApolloDuoTriplePortraitEmpty),
+                !landscape && thread ? UISplitViewControllerDisplayModeSecondaryOnly : UISplitViewControllerDisplayModeOneBesideSecondary);
+        }
+        return NO;
+    }
     if (state.feed && nav == state.primary && !feedPage) return NO;
     page.extendedLayoutIncludesOpaqueBars = YES;
     if (sidebarPick) {
@@ -4519,8 +4559,17 @@ static BOOL ApolloDuoTripleRoutePush(ApolloDuoSplitState *state, UINavigationCon
             [state.feed.view layoutIfNeeded];
         }];
         state.changing = NO;
-        if (ApolloDuoTripleSidebarShowing(split)) [split hideColumn:UISplitViewControllerColumnPrimary];
-        ApolloLog(@"[DuoTriple] feed changed in place");
+        // Search's results stay beside Search; a subreddit becomes the Posts view.
+        BOOL results = ApolloDuoTripleListShowsResults(state);
+        BOOL thread = state.secondary.viewControllers.count > 1;
+        if (!results && ApolloDuoTripleSidebarShowing(split)) {
+            NSInteger arrangement = landscape ? ApolloDuoTripleLandscape
+                : (thread ? ApolloDuoTriplePortraitThread : ApolloDuoTriplePortraitEmpty);
+            UISplitViewControllerDisplayMode rest = !landscape && thread
+                ? UISplitViewControllerDisplayModeSecondaryOnly : UISplitViewControllerDisplayModeOneBesideSecondary;
+            ApolloDuoTripleHideColumn(state, UISplitViewControllerColumnPrimary, arrangement, rest);
+        }
+        ApolloLog(@"[DuoTriple] %@ changed in place", results ? @"results" : @"feed");
         return YES;
     }
     if (feedPage) {
@@ -4542,7 +4591,8 @@ static BOOL ApolloDuoTripleRoutePush(ApolloDuoSplitState *state, UINavigationCon
     }];
     state.changing = NO;
     if (!landscape) {
-        if (state.tripleArrangement == ApolloDuoTriplePortraitEmpty) {
+        if (state.tripleArrangement == ApolloDuoTriplePortraitEmpty
+            || state.tripleArrangement == ApolloDuoTripleSearching) {
             // The list was beside the empty pane. Put it over a full-width thread
             // where it already is, so the thread lays out once at its own width,
             // then let UIKit slide the list away. No column changes width on screen.
@@ -4562,7 +4612,12 @@ static BOOL ApolloDuoTripleRoutePush(ApolloDuoSplitState *state, UINavigationCon
             if (!coordinator || ![coordinator animateAlongsideTransition:nil
                     completion:^(__unused id<UIViewControllerTransitionCoordinatorContext> context) { rest(); }]) rest();
         }
-    } else if (ApolloDuoTripleSidebarShowing(split)) [split hideColumn:UISplitViewControllerColumnPrimary];
+    } else if (ApolloDuoTripleSidebarShowing(split)) {
+        ApolloDuoTripleHideColumn(state, UISplitViewControllerColumnPrimary, ApolloDuoTripleLandscape,
+                                  UISplitViewControllerDisplayModeOneBesideSecondary);
+    } else {
+        state.tripleArrangement = ApolloDuoTripleLandscape;
+    }
     ApolloLog(@"[DuoTriple] thread column shows %@", NSStringFromClass(page.class));
     return YES;
 }
