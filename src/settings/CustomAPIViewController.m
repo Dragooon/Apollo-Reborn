@@ -2532,7 +2532,7 @@ typedef NS_ENUM(NSInteger, Tag) {
         footer = [footer stringByAppendingString:@" Group navigation buttons under •••. Tap to expand."];
     }
     if (searchBarRows) {
-        footer = [footer stringByAppendingString:@"\n\nFeed Search Bar and Find in Comments Bar: turn off to show a search button instead of the field under the title. Applies to screens opened afterwards."];
+        footer = [footer stringByAppendingString:@"\n\nFeed Search Bar and Find in Comments Bar: turn off to remove the search field under the title. Find in Comments stays in the thread's ••• menu. Applies to screens opened afterwards."];
     }
     return [ApolloSettingsSection sectionWithTitle:@"Display & Navigation"
                                             footer:footer

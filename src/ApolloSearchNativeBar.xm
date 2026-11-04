@@ -1068,7 +1068,9 @@ static void NSBUpdateSearchPlacement(UIViewController *vc) {
         }
         NSNumber *original = objc_getAssociatedObject(item, &kNSBDuoSearchPlacementKey);
         if (@available(iOS 26.0, *)) {
-            // Settings turned this bar off: a search button instead of the field.
+            // Settings turned this bar off: no field under the title and no button for
+            // it either. The controller stays attached, so the ••• menu's Find in
+            // Comments can still open a search.
             BOOL barOff = NSBIsNativeSearchCommentsVC(vc) ? !sShowFindInCommentsBar : !sShowFeedSearchBar;
             if (barOff) {
                 if (!original) {
@@ -1079,6 +1081,10 @@ static void NSBUpdateSearchPlacement(UIViewController *vc) {
                 item.searchBarPlacementAllowsToolbarIntegration = NO;
                 if (item.preferredSearchBarPlacement != UINavigationItemSearchBarPlacementIntegratedButton)
                     item.preferredSearchBarPlacement = UINavigationItemSearchBarPlacementIntegratedButton;
+                if (@available(iOS 27.0, *)) {
+                    UIBarButtonItem *button = item.searchBarPlacementBarButtonItem;
+                    if (button && !button.hidden) button.hidden = YES;
+                }
                 NSBUpdateDuoControls(vc);
                 return;
             }
