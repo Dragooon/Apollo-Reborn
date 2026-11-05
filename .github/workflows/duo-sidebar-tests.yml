@@ -1,7 +1,7 @@
 name: Duo sidebar tests
 on:
   push:
-    branches: [ci/pr-duo-rail-reply]
+    branches: [ci/pr-pair1]
 permissions:
   contents: read
 jobs:
