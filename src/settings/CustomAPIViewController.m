@@ -2515,6 +2515,26 @@ typedef NS_ENUM(NSInteger, Tag) {
             [NSUserDefaults.standardUserDefaults setBool:sender.isOn forKey:UDKeyDuoRailReplyButton];
         }];
     duoRailReply.visible = ^BOOL { return ApolloDuoUsesAdaptiveBars(); };
+    ApolloSettingsRow *feedSearchBar =
+        [ApolloSettingsRow switchRowWithID:@"interface.feedSearchBar"
+                                     title:@"Feed Search Bar"
+                                      isOn:^BOOL { return sShowFeedSearchBar; }
+                                  onToggle:^(UISwitch *sender) {
+            sShowFeedSearchBar = sender.isOn;
+            [NSUserDefaults.standardUserDefaults setBool:sender.isOn forKey:UDKeyShowFeedSearchBar];
+        }];
+    ApolloSettingsRow *findInCommentsBar =
+        [ApolloSettingsRow switchRowWithID:@"interface.findInCommentsBar"
+                                     title:@"Find in Comments Bar"
+                                      isOn:^BOOL { return sShowFindInCommentsBar; }
+                                  onToggle:^(UISwitch *sender) {
+            sShowFindInCommentsBar = sender.isOn;
+            [NSUserDefaults.standardUserDefaults setBool:sender.isOn forKey:UDKeyShowFindInCommentsBar];
+        }];
+    BOOL searchBarRows = NO;
+    if (@available(iOS 26.0, *)) searchBarRows = IsLiquidGlass();
+    feedSearchBar.visible = ^BOOL { return searchBarRows; };
+    findInCommentsBar.visible = ^BOOL { return searchBarRows; };
 
     NSString *footer = @"Return Button restores your scroll position after a status bar tap.";
     if (IsLiquidGlass()) {
@@ -2523,9 +2543,12 @@ typedef NS_ENUM(NSInteger, Tag) {
     if (ApolloDuoUsesAdaptiveBars()) {
         footer = [footer stringByAppendingString:@"\n\nReply Button in Side Rail: on iPhone Duo, threads show Reply beside the other actions in the side rail instead of only in the ••• menu."];
     }
+    if (searchBarRows) {
+        footer = [footer stringByAppendingString:@"\n\nFeed Search Bar and Find in Comments Bar: turn off to remove the search field under the title. Find in Comments stays in the thread's ••• menu. Applies to screens opened afterwards."];
+    }
     return [ApolloSettingsSection sectionWithTitle:@"Display & Navigation"
                                             footer:footer
-                                              rows:@[ scrollReturnButton, trueBlackKeyboard, collapseActions, centerBetween, iPadPaneLayout, scrollEdgeEffect, duoRailReply ]];
+                                              rows:@[ scrollReturnButton, trueBlackKeyboard, collapseActions, centerBetween, iPadPaneLayout, scrollEdgeEffect, feedSearchBar, findInCommentsBar, duoRailReply ]];
 }
 
 // Display order differs from stored values; Blur is optional, while Hidden
