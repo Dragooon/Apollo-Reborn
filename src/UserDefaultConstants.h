@@ -370,8 +370,8 @@ static NSString *const UDKeyDuoLandscapeFeedLayout = @"DuoLandscapeFeedLayout";
 // (default), YES = Liquid Glass. The panel keeps the same size and navigation.
 static NSString *const UDKeyDuoSubredditPanelGlassEnabled = @"DuoSubredditPanelGlassEnabled";
 // Preview. Open Duo Posts as UIKit's three columns (subreddits, posts, thread)
-// instead of the subreddit panel over a two-column split. Read when Posts opens in
-// columns. Default NO. See ApolloDuoTripleSync in ApolloDuoSplitView.xm.
+// instead of the subreddit panel over a two-column split, and Search as Search,
+// results and thread. Read when Posts or Search opens in columns. Default NO. See ApolloDuoTripleSync in ApolloDuoSplitView.xm.
 static NSString *const UDKeyDuoThreeColumnPosts = @"DuoThreeColumnPosts";
 // Subreddit quick-switcher (feed title tap, Posts tab long press): YES = the
 // tweak's Modern search sheet (default on Duo), NO = Apollo's Classic inline popup

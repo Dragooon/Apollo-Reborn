@@ -114,6 +114,7 @@ static BOOL ApolloDuoSplitShouldOpen(__unused id tabs) { return landscape; }
 // paths under test never set it.
 static BOOL sDuoSplitPushingFeedLink;
 static BOOL ApolloDuoSplitIsUnfolded(void) { return unfolded; }
+static BOOL ApolloDuoTripleEnabled(void) { return NO; }
 static NSString *ApolloDuoSplitKind(UIViewController *page) { return page.kind; }
 static ApolloDuoSplitState *ApolloDuoSplitStateForNavigation(UINavigationController *nav,
                                                           __unused BOOL create) { return nav.duoState; }

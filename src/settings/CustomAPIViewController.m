@@ -3218,7 +3218,7 @@ static NSInteger ApolloHeaderStylePickerValue(NSInteger index, BOOL blurAvailabl
                                                                               forKey:UDKeyConfirmFavoriteToggle];
                                   }];
     NSString *subredditListFooter = ApolloDuoUsesAdaptiveBars()
-        ? @"Three-Column Posts (preview): on the open iPhone Duo, subreddits, posts and the thread sit side by side as columns. Applies the next time Posts opens in columns."
+        ? @"Three-Column Posts (preview): on the open iPhone Duo, subreddits, posts and the thread sit side by side as columns, and Search shows its results beside it. Applies the next time Posts or Search opens in columns."
         : nil;
     return [ApolloSettingsSection sectionWithTitle:@"Subreddit List"
                                             footer:subredditListFooter
