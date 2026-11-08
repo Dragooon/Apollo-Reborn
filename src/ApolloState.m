@@ -84,6 +84,7 @@ BOOL sDuoSubredditPanelSidebarEnabled = NO;
 BOOL sSubredditSwitcherSheetEnabled = NO;
 BOOL sIPadPaneLayout = NO;     // opt-in (default OFF via registerDefaults, UDKeyIPadPaneLayout); iPad-gated, relaunch to apply
 BOOL sKeepSearchBarInPlace = NO;
+NSInteger sSearchBarMode = 0;    // ApolloSearchBarModeOn (UDKeySearchBarMode)
 ApolloSettingsIconAppearance sSettingsIconAppearance = ApolloSettingsIconAppearanceLight;
 BOOL sIconRowMagnifier = YES;   // effective default ON via registerDefaults (UDKeyIconRowMagnifier)
 BOOL sInfoRowTapUpvote = YES;      // effective default ON via registerDefaults (UDKeyInfoRowTapUpvote)
