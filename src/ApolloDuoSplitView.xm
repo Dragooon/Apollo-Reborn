@@ -3255,47 +3255,6 @@ void ApolloDuoSplitForgetClosedThreadAfterScrolling(UINavigationController *nav)
     if (state.feed == nav) ApolloDuoPostsReviewClosedThread(state, ApolloDuoClosedThreadEventScrolledAway, 0.0);
 }
 
-static void ApolloDuoPostsSetDetail(ApolloDuoSplitState *state, UIViewController *page, BOOL animated) {
-    ApolloDuoPostsSetDetailPages(state, page ? @[page] : @[], animated);
-}
-
-// The forward swipe on the full-width Posts feed brings back the thread the
-// last close took from beside it, through the normal open: the same pages
-// (reading position, reply text and all), not a fresh load. A stale memory
-// that no event caught is forgotten here, the first time a swipe asks.
-BOOL ApolloDuoSplitCanRestoreClosedThread(UINavigationController *nav) {
-    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
-    if (!state.closedThread || state.feed != nav || !state.split || state.changing || state.postsTogglingSplit) return NO;
-    ApolloDuoPostsReviewClosedThread(state, ApolloDuoClosedThreadEventCheck, 0.0);
-    return state.closedThread && !state.host.listVisible && !state.host.postsShowingDetail
-        && state.secondary.viewControllers.count == 1;
-}
-
-BOOL ApolloDuoSplitRestoreClosedThread(UINavigationController *nav) {
-    if (!ApolloDuoSplitCanRestoreClosedThread(nav)) return NO;
-    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
-    NSArray<UIViewController *> *pages = state.closedThread.pages;
-    state.closedThread = nil;
-    if (sDuoPostsClosedThreadState == state) sDuoPostsClosedThreadState = nil;
-    ApolloLog(@"[DuoSplit] restored the closed thread (%lu page(s)) beside the feed", (unsigned long)pages.count);
-    ApolloDuoPostsSetDetailPages(state, pages, YES);
-    ApolloDuoPostsSyncColumns(state);
-    return YES;
-}
-
-// The feed's scroll expiry (Forget Forward Swipe After Scrolling) asks about
-// the closed thread as it does about Apollo's own forward page: a token for
-// "something to forget" (its first page, nil without one), then the forget.
-id ApolloDuoSplitClosedThreadToken(UINavigationController *nav) {
-    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
-    return state.feed == nav ? state.closedThread.pages.firstObject : nil;
-}
-
-void ApolloDuoSplitForgetClosedThreadAfterScrolling(UINavigationController *nav) {
-    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
-    if (state.feed == nav) ApolloDuoPostsReviewClosedThread(state, ApolloDuoClosedThreadEventScrolledAway, 0.0);
-}
-
 static UITableView *ApolloDuoSplitFindTable(UIView *view) {
     if ([view isKindOfClass:UITableView.class]) return (id)view;
     for (UIView *child in view.subviews) {
