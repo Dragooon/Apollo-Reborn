@@ -348,12 +348,11 @@ static NSString *const UDKeyTabBarCollapseSide = @"TabBarCollapseSide";
 // "search takeover" (nav slides away + fades, field docks to the top and grows). Mutually
 // exclusive with the default nav-hide mode. Liquid Glass only. Default NO. See ApolloSearchInPlace.xm.
 static NSString *const UDKeyKeepSearchBarInPlace = @"KeepSearchBarInPlace";
-// Liquid Glass, iOS 26+. Off removes the search field under a feed's title
-// (and, on iOS 27, its search button). Default YES.
-static NSString *const UDKeyShowFeedSearchBar = @"ShowFeedSearchBar";
-// The same for Find in Comments on a thread; the ••• menu's Find in Comments
-// still opens a search. Default YES.
-static NSString *const UDKeyShowFindInCommentsBar = @"ShowFindInCommentsBar";
+// Liquid Glass, iOS 26+. The feed's search bar and a thread's Find in Comments
+// bar: ApolloSearchBarMode (On, Hidden until pulled down at the top, Off). Off
+// keeps no search on the screen; the thread's ••• Find in Comments still opens
+// one. Default On. See ApolloSearchNativeBar.xm.
+static NSString *const UDKeySearchBarMode = @"SearchBarMode";
 // iPad only, Liquid Glass only. When ON, forces the iOS 26 floating tab bar to
 // dock at the BOTTOM (classic tab bar) instead of the top-center pill, which on
 // iPad overlaps Apollo's search bar. Temporary stopgap for issue #387 until the
@@ -362,6 +361,8 @@ static NSString *const UDKeyIPadTabBarBottom = @"IPadTabBarBottom";
 static NSString *const ApolloIPadTabBarBottomChangedNotification = @"ApolloIPadTabBarBottomChangedNotification";
 // True Black Keyboard mode: 0 Off (default), 1 Dark Only, 2 Light Only, 3 Always.
 static NSString *const UDKeyTrueBlackKeyboardMode = @"TrueBlackKeyboardMode";
+// Spelling of interface text: 0 American (default, Apollo's own), 1 British. See ApolloSpelling.xm.
+static NSString *const UDKeySpellingStyle = @"SpellingStyle";
 // Settings icons: 0 = System, 1 = Light (default), 2 = Dark.
 static NSString *const UDKeySettingsIconAppearance = @"SettingsIconAppearance";
 // Glass builds only. Default ON. Applied once before UIKit/Logos startup;
@@ -378,6 +379,10 @@ static NSString *const UDKeyDuoLandscapeFeedLayout = @"DuoLandscapeFeedLayout";
 // (default), YES = Liquid Glass. The panel keeps the same size and navigation.
 static NSString *const UDKeyDuoSubredditPanelGlassEnabled = @"DuoSubredditPanelGlassEnabled";
 static NSString *const UDKeyDuoSubredditPanelSidebarEnabled = @"DuoSubredditPanelSidebarEnabled";
+// Subreddit quick-switcher (feed title tap, Posts tab long press): YES = the
+// tweak's Modern search sheet (default on Duo), NO = Apollo's Classic inline popup
+// (default elsewhere; it doesn't carry over a Duo unfold).
+static NSString *const UDKeySubredditSwitcherSheetEnabled = @"SubredditSwitcherSheetEnabled";
 // iPad only. When ON, replaces each tab's single navigation stack with a
 // multi-column UISplitViewController: sidebar (the tab's own root list) →
 // content → detail. Opt-in; default OFF via registerDefaults. Installation
@@ -871,6 +876,13 @@ static NSString *const UDKeyActionMenuLayouts = @"ActionMenuLayouts";
 static NSString *const UDKeyActionMenuLastPresented = @"ActionMenuLastPresented";
 // Posted (object = the context id) whenever a menu's order or hidden set changes.
 static NSString *const ApolloActionMenuLayoutsChangedNotification = @"ApolloActionMenuLayoutsChangedNotification";
+
+// All+ r/all: blend NSFW posts into r/all the way old Reddit's r/all showed
+// them (see ApolloAllPlusNSFW.xm / ApolloAllPlusMerge.m). Opt-in, default OFF.
+static NSString *const UDKeyAllPlusNSFWEnabled = @"AllPlusNSFWEnabled";
+// User boost added to candidate hot-rank on the r/all merge.
+// double in [0.0, 2.0]; 0.0 = pure hot-merge. Set from the settings slider.
+static NSString *const UDKeyAllPlusNSFWBoost = @"AllPlusNSFWBoost";
 
 // The last TWEAK_VERSION (without the leading "v") the What's New sheet was
 // shown for (or silently advanced past, when a version has no catalog entry).

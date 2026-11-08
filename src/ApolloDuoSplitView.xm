@@ -16,7 +16,6 @@
 #import "ApolloState.h"
 #import "UserDefaultConstants.h"
 #import "ApolloDuoRail.h"
-#import "ApolloNativeActionMenus.h"
 #import "ApolloDuoCompatibility.h"
 #import "ApolloDuoRailLayout.h"
 #import "ApolloDuoUIKitCompatibility.h"
@@ -1362,6 +1361,11 @@ UINavigationController *ApolloDuoSplitDetailNavigation(UINavigationController *n
     return state.split && !state.changing ? (state.feed && !state.host.postsShowingDetail ? state.feed : state.secondary) : nav;
 }
 
+UINavigationController *ApolloDuoSplitFeedNavigation(UINavigationController *nav) {
+    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
+    return state.split && !state.changing ? state.feed : nil;
+}
+
 BOOL ApolloDuoSplitAllowsNavigationSwipe(UINavigationController *nav) {
     ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
     if (state.changing) return NO;
@@ -2514,22 +2518,10 @@ static char kApolloDuoCommentsLayoutKey, kApolloDuoCommentsLayoutPendingKey;
 @interface ApolloDuoCommentsLayoutControl : NSObject <ApolloDuoLayoutControl>
 @property(nonatomic, weak) UIViewController *controller;
 @property(nonatomic, strong) UIBarButtonItem *item;
-@property(nonatomic, strong) UIBarButtonItem *replyItem;
 - (void)update;
 - (void)toggle;
-- (void)reply;
 @end
 static NSMapTable<UINavigationItem *, ApolloDuoCommentsLayoutControl *> *sDuoCommentsLayoutOwners;
-
-static NSString *const kApolloDuoCommentsReplyID = @"ApolloDuoCommentsReply";
-
-// The side rail has room for Reply, so it sits there instead of only in •••.
-// It runs the ••• menu's own Reply action (kind 12), so Apollo's composer,
-// account and lock rules apply unchanged.
-static BOOL ApolloDuoCommentsShowsReply(UIViewController *controller) {
-    return ApolloDeviceIsDuo() && ApolloDuoRailHasVisibleSideBar()
-        && [controller respondsToSelector:NSSelectorFromString(@"moreOptionsBarButtonItemTappedWithSender:")];
-}
 
 static BOOL ApolloDuoCommentsShowsLayoutControl(UIViewController *controller) {
     if (!ApolloDuoSplitIsUnfolded() || ApolloDuoSplitIsUnfoldedPortrait()) return NO;
@@ -2544,12 +2536,8 @@ NSArray<UIBarButtonItem *> *ApolloDuoCommentsLayoutItems(UINavigationItem *item,
     if (!control) return items;
     NSMutableArray *result = [NSMutableArray array];
     if (ApolloDuoCommentsShowsLayoutControl(control.controller)) [result addObject:control.item];
-    if (control.replyItem && ApolloDuoCommentsShowsReply(control.controller)) [result addObject:control.replyItem];
-    for (UIBarButtonItem *candidate in items) {
-        NSString *identifier = candidate.accessibilityIdentifier;
-        if (![identifier isEqualToString:kApolloDuoCommentsLayoutID] && ![identifier isEqualToString:kApolloDuoCommentsReplyID])
-            [result addObject:candidate];
-    }
+    for (UIBarButtonItem *candidate in items)
+        if (![candidate.accessibilityIdentifier isEqualToString:kApolloDuoCommentsLayoutID]) [result addObject:candidate];
     return result;
 }
 
@@ -2558,12 +2546,6 @@ NSArray<UIBarButtonItem *> *ApolloDuoCommentsLayoutItems(UINavigationItem *item,
 - (void)toggle {
     if (ApolloDuoCommentsShowsLayoutControl(self.controller))
         ApolloDuoToggleVisibleFeedLayout(self.controller, self.item.enabled);
-}
-- (void)reply {
-    UIViewController *controller = self.controller;
-    if (!controller.viewIfLoaded.window) return;
-    BOOL opened = ApolloNativeActionMenuInvokePostsAction(controller, controller.view, 12);
-    ApolloLog(@"[DuoSplit] rail Reply opened=%d", opened);
 }
 - (void)update {
     [self updateFeedLayoutButton];
@@ -2576,7 +2558,7 @@ NSArray<UIBarButtonItem *> *ApolloDuoCommentsLayoutItems(UINavigationItem *item,
 
 static void ApolloDuoCommentsUpdateLayoutControl(UIViewController *controller) {
     ApolloDuoCommentsLayoutControl *control = objc_getAssociatedObject(controller, &kApolloDuoCommentsLayoutKey);
-    if (!control && !ApolloDuoCommentsShowsLayoutControl(controller) && !ApolloDuoCommentsShowsReply(controller)) return;
+    if (!control && !ApolloDuoCommentsShowsLayoutControl(controller)) return;
     if (!control) {
         control = [ApolloDuoCommentsLayoutControl new];
         control.controller = controller;
@@ -2593,16 +2575,6 @@ static void ApolloDuoCommentsUpdateLayoutControl(UIViewController *controller) {
             control.item.sharesBackground = NO;
         }
         if (@available(iOS 27.1, *)) control.item.axisBehavior = UIBarButtonItemAxisBehaviorHorizontalOnly;
-        control.replyItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"arrowshape.turn.up.left"]
-            style:UIBarButtonItemStylePlain target:control action:@selector(reply)];
-        control.replyItem.title = @"Reply";
-        control.replyItem.accessibilityLabel = @"Reply";
-        control.replyItem.accessibilityIdentifier = kApolloDuoCommentsReplyID;
-        control.replyItem.tintColor = ApolloNavigationChromeColor();
-        if (@available(iOS 26.0, *)) {
-            control.replyItem.hidesSharedBackground = NO;
-            control.replyItem.sharesBackground = NO;
-        }
         objc_setAssociatedObject(controller, &kApolloDuoCommentsLayoutKey, control, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         if (!sDuoCommentsLayoutOwners) sDuoCommentsLayoutOwners = [NSMapTable weakToWeakObjectsMapTable];
         [sDuoCommentsLayoutOwners setObject:control forKey:controller.navigationItem];
@@ -2614,7 +2586,7 @@ static void ApolloDuoCommentsUpdateLayoutControl(UIViewController *controller) {
 static void ApolloDuoCommentsScheduleLayoutControl(UIViewController *controller) {
     ApolloDuoCommentsLayoutControl *control = objc_getAssociatedObject(controller, &kApolloDuoCommentsLayoutKey);
     if (objc_getAssociatedObject(controller, &kApolloDuoCommentsLayoutPendingKey)
-        || (!control && !ApolloDuoCommentsShowsLayoutControl(controller) && !ApolloDuoCommentsShowsReply(controller))) return;
+        || (!control && !ApolloDuoCommentsShowsLayoutControl(controller))) return;
     objc_setAssociatedObject(controller, &kApolloDuoCommentsLayoutPendingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     __weak UIViewController *weakController = controller;
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -3283,6 +3255,47 @@ void ApolloDuoSplitForgetClosedThreadAfterScrolling(UINavigationController *nav)
     if (state.feed == nav) ApolloDuoPostsReviewClosedThread(state, ApolloDuoClosedThreadEventScrolledAway, 0.0);
 }
 
+static void ApolloDuoPostsSetDetail(ApolloDuoSplitState *state, UIViewController *page, BOOL animated) {
+    ApolloDuoPostsSetDetailPages(state, page ? @[page] : @[], animated);
+}
+
+// The forward swipe on the full-width Posts feed brings back the thread the
+// last close took from beside it, through the normal open: the same pages
+// (reading position, reply text and all), not a fresh load. A stale memory
+// that no event caught is forgotten here, the first time a swipe asks.
+BOOL ApolloDuoSplitCanRestoreClosedThread(UINavigationController *nav) {
+    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
+    if (!state.closedThread || state.feed != nav || !state.split || state.changing || state.postsTogglingSplit) return NO;
+    ApolloDuoPostsReviewClosedThread(state, ApolloDuoClosedThreadEventCheck, 0.0);
+    return state.closedThread && !state.host.listVisible && !state.host.postsShowingDetail
+        && state.secondary.viewControllers.count == 1;
+}
+
+BOOL ApolloDuoSplitRestoreClosedThread(UINavigationController *nav) {
+    if (!ApolloDuoSplitCanRestoreClosedThread(nav)) return NO;
+    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
+    NSArray<UIViewController *> *pages = state.closedThread.pages;
+    state.closedThread = nil;
+    if (sDuoPostsClosedThreadState == state) sDuoPostsClosedThreadState = nil;
+    ApolloLog(@"[DuoSplit] restored the closed thread (%lu page(s)) beside the feed", (unsigned long)pages.count);
+    ApolloDuoPostsSetDetailPages(state, pages, YES);
+    ApolloDuoPostsSyncColumns(state);
+    return YES;
+}
+
+// The feed's scroll expiry (Forget Forward Swipe After Scrolling) asks about
+// the closed thread as it does about Apollo's own forward page: a token for
+// "something to forget" (its first page, nil without one), then the forget.
+id ApolloDuoSplitClosedThreadToken(UINavigationController *nav) {
+    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
+    return state.feed == nav ? state.closedThread.pages.firstObject : nil;
+}
+
+void ApolloDuoSplitForgetClosedThreadAfterScrolling(UINavigationController *nav) {
+    ApolloDuoSplitState *state = ApolloDuoSplitStateForNavigation(nav, NO);
+    if (state.feed == nav) ApolloDuoPostsReviewClosedThread(state, ApolloDuoClosedThreadEventScrolledAway, 0.0);
+}
+
 static UITableView *ApolloDuoSplitFindTable(UIView *view) {
     if ([view isKindOfClass:UITableView.class]) return (id)view;
     for (UIView *child in view.subviews) {
@@ -3393,6 +3406,31 @@ static UIViewController *ApolloDuoSplitForwardPage(UINavigationController *nav) 
     return [page isKindOfClass:UIViewController.class] ? page : nil;
 }
 
+// Apollo records forward pages when its own pop override runs, and forgets
+// them in didShow only after its own push override (RE: the pushing/popping
+// flags in -navigationController:didShowViewController:animated:). The split
+// opens subreddits, threads and sidebar destinations with
+// setViewControllers:, which skips that push, so a page left by an earlier
+// Back stayed queued: a left swipe after picking r/X from the list re-pushed
+// the old one. When the split moves a stack forward (its new top is a page
+// the stack did not hold), forget the forward pages as a native push would.
+// A Back keeps them, as do the user's own Back gestures and buttons.
+static BOOL ApolloDuoSplitStackMovesForward(NSArray<UIViewController *> *before, NSArray<UIViewController *> *after) {
+    UIViewController *top = after.lastObject;
+    return top && [before indexOfObjectIdenticalTo:top] == NSNotFound;
+}
+
+static void ApolloDuoSplitForgetForward(UINavigationController *nav, NSArray<UIViewController *> *before) {
+    if (before && !ApolloDuoSplitStackMovesForward(before, nav.viewControllers)) return;
+    UIViewController *forward = ApolloDuoSplitForwardPage(nav);
+    if (!forward) return;
+    // The same native wipe as ForwardSwipeExpiry: Apollo's override of
+    // -didReceiveMemoryWarning only empties poppedViewControllers.
+    [nav didReceiveMemoryWarning];
+    ApolloLog(@"[DuoSplit] forgot forward page %@ after the split opened %@",
+              NSStringFromClass(forward.class), NSStringFromClass(nav.topViewController.class));
+}
+
 static BOOL ApolloDuoSplitOpenStartupFeed(ApolloDuoSplitState *state) {
     // Native General stores ["subreddit", name], ["multireddit", user, name],
     // or a one-element built-in-feed choice (verified in Apollo's setter).
@@ -3476,7 +3514,9 @@ static void ApolloDuoAccountSetPages(ApolloDuoSplitState *state, NSArray<UIViewC
     // UINavigationController selects a pop when the destination is already in
     // the stack and a push for a new shortcut. Keep Apollo's animator/delegate.
     BOOL animated = surface.window && !UIAccessibilityIsReduceMotionEnabled();
+    NSArray *before = state.secondary.viewControllers;
     [state.secondary setViewControllers:pages animated:animated];
+    ApolloDuoSplitForgetForward(state.secondary, before);
     state.host.pendingAccountDetail = nil;
     [state.secondary setNavigationBarHidden:pages.count == 1 animated:animated];
 
@@ -4297,10 +4337,12 @@ static void ApolloDuoSplitUpdate(void) {
             if (state.split && state.halfWidthSidebar != halfWidth) {
                 // UIKit animates the same column containers; content and
                 // navigation chrome move with the divider in both directions.
-                [UIView animateWithDuration:0.25 animations:^{
+                // The fold region can publish a beat after the posture
+                // change, so keep both panes scrollable while it moves.
+                [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{
                     ApolloDuoSplitApplySidebarWidth(state, halfWidth);
                     [state.split.view layoutIfNeeded];
-                }];
+                } completion:nil];
             }
             ApolloDuoSplitOpenDefault(state);
             ApolloDuoPostsSyncColumns(state);
@@ -4676,6 +4718,7 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
             // Replacing the root avoids accumulating old subreddit pages in the Back stack.
             UIView *surface = state.host.view;
             [surface layoutIfNeeded];
+            NSArray *feedBefore = state.feed.viewControllers;
             CGFloat panel = state.host.listVisible ? CGRectGetWidth(state.host.listGlass.bounds) : 0.0;
             CGRect changing = CGRectMake(panel, 0, MAX(0.0, CGRectGetWidth(surface.bounds) - panel), CGRectGetHeight(surface.bounds));
             ApolloDuoPostsCrossfade(state.host, animate && surface.window ? changing : CGRectNull, ^{
@@ -4685,6 +4728,7 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
                 [state.feed setViewControllers:@[page] animated:NO];
                 [surface layoutIfNeeded];
             });
+            ApolloDuoSplitForgetForward(state.feed, feedBefore);
             ApolloLog(@"[DuoSplit] subreddit changed in place animated=%d", animate);
             [state.host setListVisible:NO animated:YES];
         } else if (nav == state.feed || nav == state.outer) {
@@ -4700,7 +4744,12 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
             }
             // From the portrait overlay the thread changes behind it as it closes.
             BOOL fromOverlay = state.host.postsOverlayVisible;
+            NSArray *threadBefore = state.secondary.viewControllers;
             ApolloDuoPostsSetDetail(state, page, animated && !fromOverlay);
+            // A thread is a new page for the whole Posts tab, as a native
+            // push onto one stack would be: neither pane keeps a forward page.
+            ApolloDuoSplitForgetForward(state.feed, nil);
+            ApolloDuoSplitForgetForward(state.secondary, threadBefore);
             if (fromOverlay) ApolloDuoPostsSetOverlay(state, NO);
             else if (state.host.listVisible) [state.host setListVisible:NO animated:animated];
         } else return NO;
@@ -4762,6 +4811,9 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
         // remains Apollo's normal push path.
         if (state.secondary.viewControllers.count > 1) {
             [state.secondary popToRootViewControllerAnimated:animated && !UIAccessibilityIsReduceMotionEnabled()];
+            // Apollo's popToRoot override queues the popped pages as forward
+            // pages. This reselection is not a Back, so drop them.
+            ApolloDuoSplitForgetForward(state.secondary, nil);
         }
         ApolloLog(@"[DuoSplit] current Settings destination reselected; keeping root page");
         return YES;
@@ -4776,9 +4828,11 @@ static BOOL ApolloDuoSplitRoutePush(UINavigationController *nav, UIViewControlle
         // A later subreddit changes in place; the first one's picture was taken above.
         CGRect pane = searchSubreddit && !searchPicture && surface.window && !UIAccessibilityIsReduceMotionEnabled()
             ? ApolloDuoPostsDetailPane(state) : CGRectNull;
+        NSArray *before = state.secondary.viewControllers;
         ApolloDuoPostsCrossfade(state.host, pane, ^{
             [state.secondary setViewControllers:@[page] animated:NO];
         });
+        ApolloDuoSplitForgetForward(state.secondary, before);
         if (searchSubreddit) {
             ApolloDuoSearchUpdateBackItem(state);
             // The host was just installed as the outer navigation root.

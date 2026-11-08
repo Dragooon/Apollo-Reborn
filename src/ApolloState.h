@@ -203,6 +203,8 @@ extern NSInteger sDuoLandscapeFeedLayout;
 // Standard (default NO) or Liquid Glass for the open Duo subreddit panel.
 extern BOOL sDuoSubredditPanelGlassEnabled;
 extern BOOL sDuoSubredditPanelSidebarEnabled;
+// Modern sheet or Apollo's Classic popup for the subreddit quick-switcher.
+extern BOOL sSubredditSwitcherSheetEnabled;
 BOOL ApolloSupportsNativeTabBarScrollBehavior(void);
 #ifdef __cplusplus
 }
@@ -245,9 +247,13 @@ extern BOOL sLiquidGlassEnabled;
 // dock/grow); the field stays put and results populate the feed in place. Liquid Glass only;
 // mutually exclusive with the default nav-hide mode. See ApolloSearchInPlace.xm.
 extern BOOL sKeepSearchBarInPlace;
-// UDKeyShowFeedSearchBar / UDKeyShowFindInCommentsBar (ApolloSearchNativeBar.xm).
-extern BOOL sShowFeedSearchBar;
-extern BOOL sShowFindInCommentsBar;
+// UDKeySearchBarMode (ApolloSearchNativeBar.xm). Stored values; keep them stable.
+typedef NS_ENUM(NSInteger, ApolloSearchBarMode) {
+    ApolloSearchBarModeOn = 0,
+    ApolloSearchBarModeHidden = 1,
+    ApolloSearchBarModeOff = 2,
+};
+extern NSInteger sSearchBarMode;
 // When ON (default), press-and-hold on a post info row shows the glass-slider
 // magnifier loupe: slide to pick an icon, release to activate it (upvote /
 // comments / posted / % upvoted / translation). See ApolloStatsRowTouch.xm.
@@ -727,6 +733,10 @@ extern BOOL sTagFilterSpoiler;
 // Lowercased subreddit name -> dictionary with optional keys:
 //   nsfw (NSNumber BOOL), spoiler (NSNumber BOOL), mode (NSString).
 extern NSDictionary<NSString *, NSDictionary *> *sTagFilterSubredditOverrides;
+
+// All+ r/all: NSFW posts blended into r/all (see ApolloAllPlusNSFW.xm / ApolloAllPlusMerge.m).
+extern BOOL sAllPlusNSFWEnabled;   // master toggle (default NO)
+extern double sAllPlusNSFWBoost;   // user boost added to candidate hot-rank ([0,2], default 0)
 
 // Post filters (Reborn) feature — see UserDefaultConstants.h.
 // Lowercased subreddit -> @{ @"keywords": NSArray<NSString*>, @"flairs": NSArray<NSString*> }.
