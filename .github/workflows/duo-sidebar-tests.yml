@@ -13,7 +13,7 @@ jobs:
       - name: Duo host tests
         run: |
           status=0
-          for test_script in tests/run_duo_*_tests.sh; do
+          for test_script in tests/run_duo_*_tests.sh tests/run_for_you_feed_tests.sh tests/run_native_search_overlay_return_tests.sh tests/run_comment_jump_tests.sh tests/run_classic_bar_theme_regression_check.sh; do
             echo "::group::$test_script"
             sh "$test_script" || { echo "FAILED: $test_script"; status=1; }
             echo "::endgroup::"
