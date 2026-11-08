@@ -3171,6 +3171,16 @@ static NSInteger ApolloHeaderStylePickerValue(NSInteger index, BOOL blurAvailabl
         }];
     panelStyle.visible = ^BOOL { return ApolloDuoUsesAdaptiveBars(); };
 
+    // Read when Posts next opens in columns (ApolloDuoSplitView.xm).
+    ApolloSettingsRow *threeColumnPosts =
+        [ApolloSettingsRow switchRowWithID:@"sub.threeColumnPosts"
+                                     title:@"Three-Column Posts"
+                                      isOn:^BOOL { return [NSUserDefaults.standardUserDefaults boolForKey:UDKeyDuoThreeColumnPosts]; }
+                                  onToggle:^(UISwitch *sender) {
+            [NSUserDefaults.standardUserDefaults setBool:sender.isOn forKey:UDKeyDuoThreeColumnPosts];
+        }];
+    threeColumnPosts.visible = ^BOOL { return ApolloDuoUsesAdaptiveBars(); };
+
     // Pushes the dedicated Subreddit Sections screen: the FOLLOWING section
     // for followed users, drag-to-reorder for the special sections, and a
     // live preview of the list layout (see ApolloSubredditSectionsViewController).
@@ -3207,9 +3217,12 @@ static NSInteger ApolloHeaderStylePickerValue(NSInteger index, BOOL blurAvailabl
                                       [[NSUserDefaults standardUserDefaults] setBool:sender.isOn
                                                                               forKey:UDKeyConfirmFavoriteToggle];
                                   }];
+    NSString *subredditListFooter = ApolloDuoUsesAdaptiveBars()
+        ? @"Three-Column Posts (preview): on the open iPhone Duo, subreddits, posts and the thread sit side by side as columns. Applies the next time Posts opens in columns."
+        : nil;
     return [ApolloSettingsSection sectionWithTitle:@"Subreddit List"
-                                            footer:nil
-                                              rows:@[ feedShortcuts, subredditSections, panelStyle,
+                                            footer:subredditListFooter
+                                              rows:@[ feedShortcuts, subredditSections, panelStyle, threeColumnPosts,
                                                       perAccountFavorites, sortFavoritesAlphabetically, confirmFavoriteToggle ]];
 }
 

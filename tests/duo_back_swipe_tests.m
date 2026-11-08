@@ -119,7 +119,7 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 @property(nonatomic, copy) NSArray *profilePrefix;
 @property(nonatomic, strong) UIViewController *root;
 @property(nonatomic, strong) TestDuoHost *host;
-@property(nonatomic) BOOL changing;
+@property(nonatomic) BOOL changing, triple;
 @end
 @implementation ApolloDuoSplitState @end
 static BOOL duo = YES, disabled, leftSwipesDisabled, rightSwipesDisabled, resizing, reduceMotion;
@@ -168,6 +168,8 @@ static BOOL ApolloDuoSplitRestoreClosedThread(UINavigationController *nav) {
     threadRestores++;
     return YES;
 }
+static BOOL ApolloDuoSplitTripleCanRevealLevel(__unused UINavigationController *nav) { return NO; }
+static BOOL ApolloDuoSplitTripleRevealLevel(__unused UINavigationController *nav) { return NO; }
 static CGRect ApolloDuoSplitContentFrame(UINavigationController *nav, __unused UIView *view) { return nav.pane; }
 static BOOL UIAccessibilityIsReduceMotionEnabled(void) { return reduceMotion; }
 enum { UISwipeGestureRecognizerDirectionRight = 1, UISwipeGestureRecognizerDirectionLeft = 2, UIGestureRecognizerStatePossible = 0,

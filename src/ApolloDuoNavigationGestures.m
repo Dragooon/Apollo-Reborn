@@ -29,7 +29,8 @@ static BOOL ApolloDuoSwipeEnvironmentAllows(UINavigationController *navigation) 
 static BOOL ApolloDuoBackSwipeCanNavigate(UINavigationController *navigation) {
     // A visited profile is a visit of the whole account split, header column
     // included: from either column, Back leaves the profile.
-    BOOL pane = (navigation.viewControllers.count > 1 || ApolloDuoSplitCanRevealPostsListWithSwipe(navigation))
+    BOOL pane = (navigation.viewControllers.count > 1 || ApolloDuoSplitCanRevealPostsListWithSwipe(navigation)
+                 || ApolloDuoSplitTripleCanRevealLevel(navigation))
         && ApolloDuoSplitAllowsNavigationSwipe(navigation)
         && ApolloDuoSplitDetailNavigation(navigation) == navigation;
     return (pane || ApolloDuoSplitCanReturnFromVisitedProfile(navigation)) && ApolloDuoSwipeEnvironmentAllows(navigation);
@@ -242,6 +243,10 @@ static const NSTimeInterval kApolloDuoHighlightGuardDelay = 0.12;
     if (gesture.state != UIGestureRecognizerStateRecognized || !ApolloDuoBackSwipeCanNavigate(navigation)) return;
     if (ApolloDuoSplitReturnFromVisitedProfile(navigation)) {
         ApolloLog(@"[DuoSwipe] visited profile: Back out of the profile");
+        return;
+    }
+    if (ApolloDuoSplitTripleRevealLevel(navigation)) {
+        ApolloLog(@"[DuoSwipe] three columns: show the next column out");
         return;
     }
     if (navigation.viewControllers.count == 1) {
